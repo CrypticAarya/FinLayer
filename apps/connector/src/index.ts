@@ -1,5 +1,6 @@
 import { config } from "./config.ts";
 import { getLedgers } from "./tally/requests.ts";
+import { parseLedgers } from "./tally/parser.ts";
 
 async function main() {
   console.log("FinLayer Connector started");
@@ -13,6 +14,10 @@ async function main() {
 
   console.log("Tally Response:");
   console.log(response);
+
+  console.log("Parsed Ledgers:");
+  const ledgers = parseLedgers(response);
+  console.log(JSON.stringify(ledgers, null, 2));
 }
 
 main().catch((error) => {
