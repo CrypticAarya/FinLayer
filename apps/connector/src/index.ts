@@ -1,6 +1,5 @@
 import { config } from "./config.ts";
-import { getLedgers } from "./tally/requests.ts";
-import { parseLedgers } from "./tally/parser.ts";
+import { runLedgerSync } from "./sync/sync-runner.ts";
 
 async function main() {
   console.log("FinLayer Connector started");
@@ -8,16 +7,14 @@ async function main() {
   console.log("Configuration:");
   console.log(config);
 
-  console.log("Fetching ledgers from Tally...");
+  const result = await runLedgerSync();
 
-  const response = await getLedgers();
-
-  console.log("Tally Response:");
-  console.log(response);
-
-  console.log("Parsed Ledgers:");
-  const ledgers = parseLedgers(response);
-  console.log(JSON.stringify(ledgers, null, 2));
+  console.log("Sync Result:");
+  console.log({
+    created: result.created.length,
+    updated: result.updated.length,
+    unchanged: result.unchanged.length,
+  });
 }
 
 main().catch((error) => {
