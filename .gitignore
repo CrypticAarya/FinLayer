@@ -39,3 +39,6 @@ spike/samples/local/
 
 # OS / build
 Thumbs.db
+
+# FinLayer runtime state
+apps/connector/sync-state.json
