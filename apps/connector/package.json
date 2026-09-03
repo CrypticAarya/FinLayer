@@ -5,6 +5,7 @@
   "type": "module",
   "description": "FinLayer Connector Agent for TallyPrime data synchronization",
   "scripts": {},
-  "dependencies": {},
-  "devDependencies": {}
+  "dependencies": {
+    "fast-xml-parser": "^5.11.1"
+  }
 }
