@@ -42,3 +42,6 @@ Thumbs.db
 
 # FinLayer runtime state
 apps/connector/sync-state.json
+
+# FinLayer connector runtime data
+apps/connector/data/
