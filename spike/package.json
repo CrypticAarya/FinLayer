@@ -1,0 +1,10 @@
+{
+  "name": "finlayer-tally-spike",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Throwaway experiments for understanding Tally HTTP/XML behaviour before building FinLayer production integration.",
+  "scripts": {},
+  "dependencies": {},
+  "devDependencies": {}
+}

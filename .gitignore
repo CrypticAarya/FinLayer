@@ -1,0 +1,41 @@
+# macOS
+.DS_Store
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Node.js
+node_modules/
+dist/
+coverage/
+*.log
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# IDE
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Tally spike samples
+spike/samples/private/
+spike/samples/local/
+
+# OS / build
+Thumbs.db
