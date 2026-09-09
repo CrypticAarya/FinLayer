@@ -1,5 +1,6 @@
 import { config } from "./config.ts";
-import { runLedgerSync } from "./sync/sync-runner.ts";
+import { registerAndStartHeartbeat } from "./services/registration-service.ts";
+import { startJobWorker } from "./jobs/job-worker.ts";
 
 async function main() {
   console.log("FinLayer Connector started");
@@ -7,14 +8,11 @@ async function main() {
   console.log("Configuration:");
   console.log(config);
 
-  const result = await runLedgerSync();
+  const { connectorId } = await registerAndStartHeartbeat();
 
-  console.log("Sync Result:");
-  console.log({
-    created: result.created.length,
-    updated: result.updated.length,
-    unchanged: result.unchanged.length,
-  });
+  console.log(`FinLayer Connector active with ID: ${connectorId}`);
+
+  startJobWorker(connectorId);
 }
 
 main().catch((error) => {
@@ -22,3 +20,4 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
+

@@ -4,8 +4,16 @@
   "private": true,
   "type": "module",
   "description": "FinLayer Connector Agent for TallyPrime data synchronization",
-  "scripts": {},
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
     "fast-xml-parser": "^5.11.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.0",
+    "tsx": "^4.23.13"
   }
 }

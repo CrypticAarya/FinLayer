@@ -1,0 +1,157 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Models ──────────────────────────────────────────────────────────────────
+
+model Company {
+  id                String    @id @default(cuid())
+  name              String
+  tallyCompanyName  String    @unique
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  ledgers    Ledger[]
+  syncLogs   SyncLog[]
+  vouchers   Voucher[]
+  connectors Connector[]
+  mappings   SaasCompanyMapping[]
+}
+
+model Ledger {
+  id        String   @id @default(cuid())
+  companyId String
+  name      String
+  parent    String
+  masterId  Int
+  alterId   Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company        Company        @relation(fields: [companyId], references: [id])
+  voucherEntries VoucherEntry[]
+
+  @@unique([companyId, masterId])
+  @@index([companyId])
+}
+
+model SyncLog {
+  id        String   @id @default(cuid())
+  companyId String
+  created   Int
+  updated   Int
+  unchanged Int
+  createdAt DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId])
+}
+
+// ─── Transaction Models ───────────────────────────────────────────────────────
+
+model Voucher {
+  id            String   @id @default(cuid())
+  companyId     String
+  voucherNumber String
+  voucherType   String
+  date          DateTime
+  partyName     String?
+  amount        Float
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  company        Company        @relation(fields: [companyId], references: [id])
+  voucherEntries VoucherEntry[]
+
+  @@index([companyId])
+  @@index([date])
+  @@index([companyId, voucherType])
+}
+
+model VoucherEntry {
+  id        String   @id @default(cuid())
+  voucherId String
+  ledgerId  String
+  amount    Float
+  type      String   // "debit" | "credit"
+  createdAt DateTime @default(now())
+
+  voucher Voucher @relation(fields: [voucherId], references: [id])
+  ledger  Ledger  @relation(fields: [ledgerId], references: [id])
+
+  @@index([voucherId])
+  @@index([ledgerId])
+}
+
+// ─── Connector Models ─────────────────────────────────────────────────────────
+
+model Connector {
+  id            String   @id @default(cuid())
+  companyId     String
+  name          String
+  deviceId      String   @unique
+  status        String   @default("ONLINE")
+  lastHeartbeat DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  company  Company   @relation(fields: [companyId], references: [id])
+  syncJobs SyncJob[]
+
+  @@index([companyId])
+}
+
+// ─── Sync Job Models ──────────────────────────────────────────────────────────
+
+model SyncJob {
+  id          String    @id @default(cuid())
+  connectorId String
+  type        String
+  status      String    @default("PENDING")
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  connector Connector @relation(fields: [connectorId], references: [id])
+
+  @@index([connectorId])
+  @@index([connectorId, status])
+}
+
+// ─── SaaS Developer Platform Models ──────────────────────────────────────────
+
+model SaasApplication {
+  id        String   @id @default(cuid())
+  name      String
+  apiKey    String   @unique
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  mappings SaasCompanyMapping[]
+}
+
+model SaasCompanyMapping {
+  id                 String   @id @default(cuid())
+  saasApplicationId  String
+  companyId          String
+  externalCustomerId String?
+  createdAt          DateTime @default(now())
+
+  saasApplication SaasApplication @relation(fields: [saasApplicationId], references: [id])
+  company         Company         @relation(fields: [companyId], references: [id])
+
+  @@unique([saasApplicationId, companyId])
+  @@index([saasApplicationId])
+  @@index([companyId])
+  @@index([externalCustomerId])
+}
+
+

@@ -1,4 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import prisma from "../db/prisma.js";
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -18,6 +20,37 @@ export interface SyncLedgersResponse {
   success: true;
   company: string;
   received: number;
+  created: number;
+  updated: number;
+}
+
+// ─── Voucher Types ────────────────────────────────────────────────────────────
+
+export interface VoucherEntryInput {
+  ledgerName: string;
+  amount: number;
+  type: string;
+}
+
+export interface VoucherInput {
+  voucherNumber: string;
+  voucherType: string;
+  date: string;
+  partyName?: string;
+  amount: number;
+  entries: VoucherEntryInput[];
+}
+
+export interface SyncVouchersBody {
+  company: string;
+  vouchers: VoucherInput[];
+}
+
+export interface SyncVouchersResponse {
+  success: true;
+  company: string;
+  received: number;
+  created: number;
 }
 
 // ─── Schema (Fastify JSON Schema for validation) ──────────────────────────────
@@ -45,23 +78,222 @@ const syncLedgersSchema = {
   },
 } as const;
 
-// ─── Route Handler ────────────────────────────────────────────────────────────
+const syncVouchersSchema = {
+  body: {
+    type: "object",
+    required: ["company", "vouchers"],
+    properties: {
+      company: { type: "string" },
+      vouchers: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["voucherNumber", "voucherType", "date", "amount", "entries"],
+          properties: {
+            voucherNumber: { type: "string" },
+            voucherType: { type: "string" },
+            date: { type: "string" },
+            partyName: { type: "string" },
+            amount: { type: "number" },
+            entries: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["ledgerName", "amount", "type"],
+                properties: {
+                  ledgerName: { type: "string" },
+                  amount: { type: "number" },
+                  type: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+} as const;
+
+// ─── Route Handler: /sync/ledgers ─────────────────────────────────────────────
 
 async function handleSyncLedgers(
   request: FastifyRequest<{ Body: SyncLedgersBody }>,
   reply: FastifyReply
 ): Promise<SyncLedgersResponse> {
-  const { company, ledgers } = request.body;
+  const { company: tallyCompanyName, ledgers } = request.body;
 
   request.log.info(
-    { company, count: ledgers.length },
+    { company: tallyCompanyName, count: ledgers.length },
     "Received ledger sync payload"
+  );
+
+  // ── 1. Find or create Company ─────────────────────────────────────────────
+  const company = await prisma.company.upsert({
+    where: { tallyCompanyName },
+    update: { updatedAt: new Date() },
+    create: {
+      name: tallyCompanyName,
+      tallyCompanyName,
+    },
+  });
+
+  // ── 2. Upsert ledgers (keyed by companyId + masterId) ─────────────────────
+  let created = 0;
+  let updated = 0;
+  let unchanged = 0;
+
+  for (const ledger of ledgers) {
+    const existing = await prisma.ledger.findUnique({
+      where: {
+        companyId_masterId: {
+          companyId: company.id,
+          masterId: ledger.masterId,
+        },
+      },
+    });
+
+    if (!existing) {
+      await prisma.ledger.create({
+        data: {
+          companyId: company.id,
+          name: ledger.name,
+          parent: ledger.parent,
+          masterId: ledger.masterId,
+          alterId: ledger.alterId,
+        },
+      });
+      created++;
+    } else if (existing.alterId !== ledger.alterId) {
+      await prisma.ledger.update({
+        where: { id: existing.id },
+        data: {
+          name: ledger.name,
+          parent: ledger.parent,
+          alterId: ledger.alterId,
+        },
+      });
+      updated++;
+    } else {
+      unchanged++;
+    }
+  }
+
+  // ── 3. Write SyncLog ──────────────────────────────────────────────────────
+  await prisma.syncLog.create({
+    data: {
+      companyId: company.id,
+      created,
+      updated,
+      unchanged,
+    },
+  });
+
+  request.log.info(
+    { company: tallyCompanyName, received: ledgers.length, created, updated, unchanged },
+    "Ledger sync persisted"
+  );
+
+  console.log(
+    `[API POST /sync/ledgers] Company: "${tallyCompanyName}" | Received: ${ledgers.length} | Created: ${created} | Updated: ${updated} | Unchanged: ${unchanged}`
   );
 
   return reply.status(200).send({
     success: true,
-    company,
+    company: tallyCompanyName,
     received: ledgers.length,
+    created,
+    updated,
+  });
+}
+
+// ─── Route Handler: /sync/vouchers ────────────────────────────────────────────
+
+async function handleSyncVouchers(
+  request: FastifyRequest<{ Body: SyncVouchersBody }>,
+  reply: FastifyReply
+): Promise<SyncVouchersResponse> {
+  const { company: tallyCompanyName, vouchers } = request.body;
+
+  request.log.info(
+    { company: tallyCompanyName, count: vouchers.length },
+    "Received voucher sync payload"
+  );
+
+  // ── 1. Resolve Company ────────────────────────────────────────────────────
+  const company = await prisma.company.findUnique({
+    where: { tallyCompanyName },
+  });
+
+  if (!company) {
+    return reply.status(404).send({
+      success: false,
+      error: `Company "${tallyCompanyName}" not found. Sync ledgers first.`,
+    } as never);
+  }
+
+  // ── 2. Create Vouchers + VoucherEntries ───────────────────────────────────
+  let created = 0;
+
+  for (const v of vouchers) {
+    // Resolve all ledger names up-front so we can fail fast per voucher
+    const resolvedEntries: { ledgerId: string; amount: number; type: string }[] = [];
+
+    for (const entry of v.entries) {
+      const ledger = await prisma.ledger.findFirst({
+        where: { companyId: company.id, name: entry.ledgerName },
+      });
+
+      if (!ledger) {
+        return reply.status(422).send({
+          success: false,
+          error: `Ledger "${entry.ledgerName}" not found for company "${tallyCompanyName}". Sync ledgers first.`,
+          voucher: v.voucherNumber,
+        } as never);
+      }
+
+      resolvedEntries.push({
+        ledgerId: ledger.id,
+        amount: entry.amount,
+        type: entry.type,
+      });
+    }
+
+    // Persist Voucher + its entries atomically
+    await prisma.$transaction(async (tx) => {
+      const voucher = await tx.voucher.create({
+        data: {
+          companyId: company.id,
+          voucherNumber: v.voucherNumber,
+          voucherType: v.voucherType,
+          date: new Date(v.date),
+          partyName: v.partyName ?? null,
+          amount: v.amount,
+        },
+      });
+
+      await tx.voucherEntry.createMany({
+        data: resolvedEntries.map((e) => ({
+          voucherId: voucher.id,
+          ledgerId: e.ledgerId,
+          amount: e.amount,
+          type: e.type,
+        })),
+      });
+    });
+
+    created++;
+  }
+
+  request.log.info(
+    { company: tallyCompanyName, received: vouchers.length, created },
+    "Voucher sync persisted"
+  );
+
+  return reply.status(200).send({
+    success: true,
+    company: tallyCompanyName,
+    received: vouchers.length,
+    created,
   });
 }
 
@@ -72,5 +304,11 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
     "/sync/ledgers",
     { schema: syncLedgersSchema },
     handleSyncLedgers
+  );
+
+  app.post<{ Body: SyncVouchersBody }>(
+    "/sync/vouchers",
+    { schema: syncVouchersSchema },
+    handleSyncVouchers
   );
 }

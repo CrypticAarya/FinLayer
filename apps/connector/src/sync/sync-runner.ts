@@ -3,6 +3,8 @@ import { getLedgers as getLedgerRequest } from "../tally/requests.ts";
 import { parseLedgers } from "../tally/parser.ts";
 import { compareLedgers } from "./ledger-sync.ts";
 import { loadState, saveState } from "../state/state-store.ts";
+import { sendLedgersToApi } from "../api/client.ts";
+import { config } from "../config.ts";
 import type { Ledger, SyncResult } from "./types.ts";
 
 interface LedgerState {
@@ -22,6 +24,8 @@ export async function runLedgerSync(): Promise<SyncResult> {
   await saveState<LedgerState>({
     ledgers: currentLedgers,
   });
+
+  await sendLedgersToApi(config.companyName, currentLedgers);
 
   return result;
 }

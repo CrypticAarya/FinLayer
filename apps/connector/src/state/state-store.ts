@@ -36,3 +36,37 @@ export async function saveState<T>(state: T): Promise<void> {
     "utf-8"
   );
 }
+
+export interface ConnectorState {
+  connectorId: string;
+  deviceId: string;
+  name: string;
+  company: string;
+  registeredAt: string;
+}
+
+function getConnectorFilePath(): string {
+  const currentDir = dirname(fileURLToPath(import.meta.url));
+  return resolve(currentDir, "../../data/connector.json");
+}
+
+export async function loadConnectorState(): Promise<ConnectorState | null> {
+  try {
+    const filePath = getConnectorFilePath();
+    const data = await readFile(filePath, "utf-8");
+    return JSON.parse(data) as ConnectorState;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveConnectorState(state: ConnectorState): Promise<void> {
+  const filePath = getConnectorFilePath();
+  await mkdir(dirname(filePath), { recursive: true });
+  await writeFile(
+    filePath,
+    JSON.stringify(state, null, 2),
+    "utf-8"
+  );
+}
+
