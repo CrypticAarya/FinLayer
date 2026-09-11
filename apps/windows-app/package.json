@@ -1,16 +1,17 @@
 {
   "name": "finlayer-windows-app",
   "productName": "FinLayer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "FinLayer Connector Desktop App for TallyPrime and Google Sheets",
   "main": "dist/main.js",
   "author": "FinLayer",
   "scripts": {
+    "dev": "npm run build:ts && electron dist/main.js",
     "build:ts": "node build.mjs",
     "typecheck": "tsc --noEmit",
     "build:win": "npm run build:ts && electron-builder --win --x64",
     "build": "npm run build:win",
-    "start": "npm run build:ts && electron dist/main.js"
+    "start": "npm run dev"
   },
   "build": {
     "appId": "com.finlayer.connector",
@@ -28,8 +29,9 @@
     },
     "publish": [
       {
-        "provider": "generic",
-        "url": "https://updates.finlayer.com/finlayer"
+        "provider": "github",
+        "owner": "CrypticAarya",
+        "repo": "FinLayer"
       }
     ],
     "nsis": {

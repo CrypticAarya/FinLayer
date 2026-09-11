@@ -51,7 +51,15 @@
   // State
   let currentStep = 1;
   let currentCompanyId = null;
+  let currentCompanyName = null;
   let googlePollInterval = null;
+
+  function updateDebugCompanyId(companyId) {
+    const el = document.getElementById("debug-company-id-val");
+    if (el) {
+      el.textContent = companyId || "(none)";
+    }
+  }
 
   function setFooter(text) {
     if (footerStatus) footerStatus.textContent = `Status: ${text}`;
@@ -152,7 +160,14 @@
       companyLoadingView.style.display = "none";
 
       if (res.success && res.companyName) {
-        currentCompanyId = res.companyId;
+        currentCompanyId = res.companyId || null;
+        currentCompanyName = res.companyName;
+
+        if (currentCompanyId) {
+          localStorage.setItem("finlayer-company-id", currentCompanyId);
+          updateDebugCompanyId(currentCompanyId);
+        }
+
         detectedCompanyName.textContent = res.companyName;
         companyCardTitle.textContent = "Tally Connected ✅";
         companyCardSubtitle.textContent = "Active company detected automatically.";
@@ -195,6 +210,7 @@
 
   // ── Step 4: Google Sheet Connection ────────────────────────────────────────
   async function initGoogleStep(companyId) {
+    updateDebugCompanyId(companyId);
     checkGoogleConnection(companyId);
   }
 
@@ -230,15 +246,31 @@
   async function handleGoogleConnectClick() {
     console.log("[GOOGLE BUTTON] clicked");
 
+    console.log("[GOOGLE] companyId sources:");
+    console.log("memory:", currentCompanyId);
+    console.log("storage:", localStorage.getItem("finlayer-company-id"));
+
+    // 1. currentCompanyId
     let companyId = currentCompanyId;
 
-    // Read from state: connector-state.json (Google button does not depend only on renderer memory)
+    // 2. localStorage.getItem("finlayer-company-id")
+    if (!companyId) {
+      const stored = localStorage.getItem("finlayer-company-id");
+      if (stored) {
+        companyId = stored;
+        currentCompanyId = companyId;
+        console.log("[Google] Read companyId from localStorage:", companyId);
+      }
+    }
+
+    // 3. window.finlayer.getInitialState()
     if (!companyId) {
       try {
         const init = await window.finlayer.getInitialState();
         if (init?.state?.companyId) {
           companyId = init.state.companyId;
           currentCompanyId = companyId;
+          localStorage.setItem("finlayer-company-id", companyId);
           console.log("[Google] Read companyId from state:", companyId);
         }
       } catch (err) {
@@ -246,6 +278,22 @@
       }
     }
 
+    // Fallback: If still missing and currentCompanyName is known, dynamically select
+    if (!companyId && currentCompanyName) {
+      try {
+        const sel = await window.finlayer.selectCompany(currentCompanyName);
+        if (sel?.success && sel?.companyId) {
+          companyId = sel.companyId;
+          currentCompanyId = companyId;
+          localStorage.setItem("finlayer-company-id", companyId);
+          console.log("[Google] Dynamically selected company:", companyId);
+        }
+      } catch (err) {
+        console.warn("[Google] Fallback selectCompany failed:", err);
+      }
+    }
+
+    updateDebugCompanyId(companyId);
     console.log("[GOOGLE BUTTON] companyId:", companyId);
 
     hideGoogleError();
@@ -298,16 +346,40 @@
   attachGoogleButtonListener();
 
   btnContinueCompany.addEventListener("click", async () => {
-    if (!currentCompanyId) {
+    let companyId = currentCompanyId;
+
+    if (!companyId) {
+      companyId = localStorage.getItem("finlayer-company-id");
+    }
+
+    if (!companyId) {
       try {
         const init = await window.finlayer.getInitialState();
         if (init?.state?.companyId) {
-          currentCompanyId = init.state.companyId;
+          companyId = init.state.companyId;
         }
       } catch {}
     }
+
+    if (!companyId && currentCompanyName) {
+      try {
+        const sel = await window.finlayer.selectCompany(currentCompanyName);
+        if (sel?.success && sel?.companyId) {
+          companyId = sel.companyId;
+        }
+      } catch (err) {
+        console.warn("Dynamic selectCompany failed:", err);
+      }
+    }
+
+    if (companyId) {
+      currentCompanyId = companyId;
+      localStorage.setItem("finlayer-company-id", companyId);
+      updateDebugCompanyId(companyId);
+    }
+
     goToStep(4);
-    initGoogleStep(currentCompanyId);
+    initGoogleStep(companyId);
   });
 
   btnContinueGoogle.addEventListener("click", () => {
@@ -364,6 +436,13 @@
     console.log("DOMContentLoaded running");
     attachGoogleButtonListener();
 
+    const storedCompanyId = localStorage.getItem("finlayer-company-id");
+    if (storedCompanyId) {
+      currentCompanyId = storedCompanyId;
+      updateDebugCompanyId(storedCompanyId);
+      console.log("[Init] Restored companyId from localStorage:", storedCompanyId);
+    }
+
     try {
       const init = await window.finlayer.getInitialState();
       if (init && init.state) {
@@ -372,6 +451,11 @@
         }
         if (init.state.companyId) {
           currentCompanyId = init.state.companyId;
+          localStorage.setItem("finlayer-company-id", currentCompanyId);
+          updateDebugCompanyId(currentCompanyId);
+        }
+        if (init.state.tallyCompanyName) {
+          currentCompanyName = init.state.tallyCompanyName;
         }
         if (init.state.setupStatus === "ACTIVE") {
           goToStep(5);

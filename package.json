@@ -1,4 +1,11 @@
 {
+  "name": "finlayer-root",
+  "private": true,
+  "scripts": {
+    "dev:app": "npm --prefix apps/windows-app run dev",
+    "build:app": "npm --prefix apps/windows-app run build:win",
+    "typecheck:app": "npm --prefix apps/windows-app run typecheck"
+  },
   "dependencies": {
     "electron-updater": "^6.8.9"
   }

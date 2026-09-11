@@ -33,7 +33,7 @@ import type { ConnectorState } from "../../connector/src/state/state-store.js";
 
 const PRODUCTION_API_URL = "https://api.finlayer.com";
 const STAGING_API_URL = "http://192.168.88.25:4000";
-const DEFAULT_UPDATE_URL = "https://updates.finlayer.com/finlayer";
+const DEFAULT_UPDATE_URL = "https://github.com/CrypticAarya/FinLayer/releases";
 
 function normalizeUrl(url: string): string {
   let trimmed = url.trim();
@@ -216,6 +216,7 @@ function resolveInitialTallyUrl(): string {
 
 const API_URL = resolveInitialApiUrl();
 let activeTallyUrl = resolveInitialTallyUrl();
+configureConnector();
 
 let mainWindow: BrowserWindow | null = null;
 let jobWorkerHandle: JobWorkerHandle | null = null;
@@ -336,16 +337,28 @@ function setupAutoUpdater() {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 
-  const updateUrl = resolveUpdateUrl();
-  console.log(`[AutoUpdater] Configured update URL: ${updateUrl}`);
-
-  try {
-    autoUpdater.setFeedURL({
-      provider: "generic",
-      url: updateUrl,
-    });
-  } catch (err) {
-    console.warn("[AutoUpdater] Error setting feed URL:", err);
+  const customUpdateUrl = process.env.FINLAYER_UPDATE_URL?.trim();
+  if (customUpdateUrl) {
+    console.log(`[AutoUpdater] Configured custom update URL: ${customUpdateUrl}`);
+    try {
+      autoUpdater.setFeedURL({
+        provider: "generic",
+        url: customUpdateUrl,
+      });
+    } catch (err) {
+      console.warn("[AutoUpdater] Error setting custom feed URL:", err);
+    }
+  } else {
+    console.log(`[AutoUpdater] Configured GitHub Releases update provider: CrypticAarya/FinLayer`);
+    try {
+      autoUpdater.setFeedURL({
+        provider: "github",
+        owner: "CrypticAarya",
+        repo: "FinLayer",
+      });
+    } catch (err) {
+      console.warn("[AutoUpdater] Error setting GitHub feed URL:", err);
+    }
   }
 
   autoUpdater.on("checking-for-update", () => {
@@ -458,12 +471,37 @@ function createWindow(): void {
     mainWindow?.show();
 
     // Trigger silent background update check on app startup (if not in automated testing mode)
-    if (process.env.TEST_VERIFY !== "1") {
+    if (process.env.TEST_VERIFY !== "1" && process.env.TEST_UPDATE !== "1") {
       setTimeout(() => {
         autoUpdater.checkForUpdates().catch((err) => {
           console.log("[AutoUpdater] Initial silent check skipped:", err.message);
         });
       }, 3000);
+    }
+
+    if (process.env.TEST_UPDATE === "1") {
+      console.log("✓ TEST_UPDATE: Running auto-update verification test");
+      isSetupActive = true;
+      setTimeout(() => {
+        autoUpdater.checkForUpdates().catch((err) => {
+          console.error("[AutoUpdater] Check failed:", err);
+        });
+      }, 500);
+
+      setTimeout(async () => {
+        const bannerState = await mainWindow?.webContents.executeJavaScript(`
+          (() => {
+            const banner = document.getElementById("update-banner");
+            const ver = document.getElementById("update-banner-version");
+            return {
+              display: banner ? banner.style.display : "not found",
+              versionText: ver ? ver.textContent : ""
+            };
+          })()
+        `);
+        console.log("[TEST_UPDATE Result] Banner state:", JSON.stringify(bannerState));
+        setTimeout(() => app.quit(), 500);
+      }, 7000);
     }
 
     if (process.env.TEST_VERIFY === "1") {
@@ -645,9 +683,10 @@ ipcMain.handle("finlayer:fetch-active-company", async () => {
     state.tallyCompanyName = companyName;
     configureConnector(state);
 
-    // Ensure registered with API (graceful if API has network latency)
+    // Ensure registered with API
     if (!state.connectorId) {
       try {
+        console.log(`[IPC] Registering connector with API at ${API_URL}...`);
         const reg = await registerConnectorWithApi({
           deviceId: state.deviceId,
           deviceName: state.deviceName || "Windows-PC",
@@ -656,28 +695,41 @@ ipcMain.handle("finlayer:fetch-active-company", async () => {
         state.connectorId = reg.connectorId;
         state.setupStatus = "REGISTERED";
         await saveLocalState(state);
+        console.log(`[IPC] Connector registered: ${state.connectorId}`);
       } catch (e) {
-        console.warn("[IPC] API registration postponed:", e);
+        console.warn("[IPC] API registration error:", e);
       }
     }
 
-    // Report discovery to API
+    // Report discovery to API and select company
     if (state.connectorId) {
       await reportTallyConnected(state.connectorId).catch(() => {});
       await reportTallyCompanies(state.connectorId, [{ name: companyName }]).catch(() => {});
 
       // Automatically map company
       try {
+        console.log(`[IPC] Selecting company "${companyName}" for connector "${state.connectorId}"...`);
         const selection = await selectCompanyForConnector(state.connectorId, companyName);
-        state.companyId = selection.companyId;
-        state.setupStatus = "WAITING_FOR_GOOGLE";
+        console.log(`[IPC] selectCompanyForConnector returned:`, selection);
+        if (selection && selection.companyId) {
+          state.companyId = selection.companyId;
+          state.setupStatus = "WAITING_FOR_GOOGLE";
+          await saveLocalState(state);
+        }
       } catch (e) {
-        console.warn("[IPC] API company mapping postponed:", e);
+        console.warn("[IPC] API company mapping error:", e);
       }
     }
 
     await saveLocalState(state);
     configureConnector(state);
+
+    console.log("[IPC] finlayer:fetch-active-company returning:", {
+      success: true,
+      companyName,
+      companyId: state.companyId,
+      connectorId: state.connectorId,
+    });
 
     return {
       success: true,
