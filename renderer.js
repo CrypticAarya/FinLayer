@@ -181,7 +181,7 @@
 
   function showGoogleError(msg) {
     if (googleErrorMessage) {
-      googleErrorMessage.textContent = msg || "Unable to connect Google. Company information missing.";
+      googleErrorMessage.textContent = msg || "Unable to connect Google Account. Please try again.";
       googleErrorMessage.style.display = "block";
     }
     setFooter("Error connecting Google Account");
@@ -228,7 +228,10 @@
   }
 
   async function handleGoogleConnectClick() {
-    console.log("[GOOGLE BUTTON] clicked");
+    console.log("[Google] Connect button clicked");
+    console.log("[Google] Current company ID:", currentCompanyId);
+
+    hideGoogleError();
 
     let companyId = currentCompanyId;
 
@@ -246,13 +249,9 @@
       }
     }
 
-    console.log("[GOOGLE BUTTON] companyId:", companyId);
-
-    hideGoogleError();
-
     if (!companyId) {
-      console.error("[GOOGLE BUTTON] Company ID missing!");
-      showGoogleError("Unable to connect Google. Company information missing.");
+      console.error("[Google] Company ID missing!");
+      showGoogleError("Unable to connect Google Account. Please try again.");
       return;
     }
 
@@ -261,7 +260,7 @@
       console.log("[Google] Google auth result:", result);
 
       if (!result || !result.success) {
-        showGoogleError(result?.error || "Unable to connect Google. Company information missing.");
+        showGoogleError("Unable to connect Google Account. Please try again.");
         return;
       }
 
@@ -279,23 +278,9 @@
       }
     } catch (err) {
       console.error("[Google] startGoogleAuth error:", err);
-      showGoogleError("Unable to connect Google. Company information missing.");
+      showGoogleError("Unable to connect Google Account. Please try again.");
     }
   }
-
-  function attachGoogleButtonListener() {
-    const btn = document.getElementById("btn-connect-google");
-    if (btn && !btn.dataset.bound) {
-      btn.dataset.bound = "true";
-      btn.addEventListener("click", async () => {
-        await handleGoogleConnectClick();
-      });
-      console.log("[Google] Bound click listener to #btn-connect-google");
-    }
-  }
-
-  // Attach immediately on evaluation
-  attachGoogleButtonListener();
 
   btnContinueCompany.addEventListener("click", async () => {
     if (!currentCompanyId) {
@@ -362,8 +347,6 @@
   // ── Initialization ─────────────────────────────────────────────────────────
   window.addEventListener("DOMContentLoaded", async () => {
     console.log("DOMContentLoaded running");
-    attachGoogleButtonListener();
-
     try {
       const init = await window.finlayer.getInitialState();
       if (init && init.state) {
@@ -388,6 +371,13 @@
         if (footerVersion) {
           footerVersion.textContent = `FinLayer v${verInfo.appVersion} | Connector v${verInfo.connectorVersion}`;
         }
+      }
+
+      // Attach Google Connect button listener after DOM is ready
+      const btnGoogle = document.getElementById("btn-connect-google");
+      if (btnGoogle) {
+        btnGoogle.addEventListener("click", handleGoogleConnectClick);
+        console.log("[Google] Attached click listener to btn-connect-google after DOMContentLoaded");
       }
     } catch (err) {
       console.warn("Failed to get initial state/version:", err);

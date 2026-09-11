@@ -138,8 +138,8 @@ function resolveInitialApiUrl(): string {
     return PRODUCTION_API_URL;
   }
 
-  // 5. Staging build default
-  return STAGING_API_URL;
+  // 5. Default API URL (localhost)
+  return "http://127.0.0.1:4000";
 }
 
 function resolveUpdateUrl(): string {
@@ -240,7 +240,24 @@ function getUpdateStateFilePath(): string {
   return path.join(getUserDataDir(), "update-state.json");
 }
 
+let testFlowState: ConnectorState | null = null;
+
 async function loadLocalState(): Promise<ConnectorState> {
+  if (process.env.TEST_FLOW === "1" && !testFlowState) {
+    testFlowState = {
+      deviceId: "win-test-flow-" + Date.now(),
+      connectorId: "",
+      registeredAt: new Date().toISOString(),
+      deviceName: "Windows-Test-PC",
+      operatingSystem: "Windows 11 / 10",
+      setupStatus: "REGISTERED",
+    };
+    return testFlowState;
+  }
+  if (process.env.TEST_FLOW === "1" && testFlowState) {
+    return testFlowState;
+  }
+
   const filePath = getStateFilePath();
   try {
     if (existsSync(filePath)) {
@@ -267,6 +284,9 @@ async function loadLocalState(): Promise<ConnectorState> {
 }
 
 async function saveLocalState(state: ConnectorState): Promise<void> {
+  if (process.env.TEST_FLOW === "1") {
+    testFlowState = state;
+  }
   const filePath = getStateFilePath();
   try {
     await fs.mkdir(path.dirname(filePath), { recursive: true });
@@ -422,6 +442,18 @@ function createWindow(): void {
     console.log(`[Renderer] ${msg}`);
   });
 
+  // Enable opening DevTools via F12, Ctrl+Shift+I, or if FINLAYER_DEBUG / --devtools is set
+  mainWindow.webContents.on("before-input-event", (event, input) => {
+    if (input.key === "F12" || (input.control && input.shift && input.key.toLowerCase() === "i")) {
+      mainWindow?.webContents.toggleDevTools();
+      event.preventDefault();
+    }
+  });
+
+  if (process.env.FINLAYER_DEBUG === "1" || process.argv.includes("--devtools")) {
+    mainWindow.webContents.openDevTools();
+  }
+
   mainWindow.once("ready-to-show", () => {
     mainWindow?.show();
 
@@ -443,6 +475,68 @@ function createWindow(): void {
         }
       `);
       setTimeout(() => app.quit(), 1000);
+    }
+
+    if (process.env.TEST_FLOW === "1") {
+      console.log("✓ TEST_FLOW: Starting automated end-to-end flow test");
+      mainWindow?.webContents.executeJavaScript(`
+        (async () => {
+          console.log("[Preload Bridge] Object.keys(window.finlayer): " + JSON.stringify(Object.keys(window.finlayer || {})));
+
+          console.log("[Test Flow] 1. Clicking Start Setup...");
+          document.getElementById("btn-start-setup")?.click();
+
+          console.log("[Test Flow] Waiting for company detection...");
+          let companyBtn = null;
+          for (let i = 0; i < 40; i++) {
+            await new Promise(r => setTimeout(r, 500));
+            companyBtn = document.getElementById("btn-continue-company");
+            const foundView = document.getElementById("company-found-view");
+            if (foundView && foundView.style.display !== "none" && companyBtn) {
+              console.log("[Test Flow] Company found view is visible!");
+              break;
+            }
+          }
+
+          console.log("[Test Flow] 2. Company detected! Clicking Continue to Google step...");
+          companyBtn?.click();
+
+          await new Promise(r => setTimeout(r, 1200));
+          console.log("[Test Flow] 3. In Google Sheet step. Clicking Connect Google Account...");
+          const googleBtn = document.getElementById("btn-connect-google");
+          if (googleBtn) {
+            googleBtn.click();
+          } else {
+            console.error("[Test Flow] btn-connect-google not found!");
+          }
+
+          await new Promise(r => setTimeout(r, 2000));
+          console.log("[Test Flow] Complete flow verification finished!");
+        })();
+      `);
+      setTimeout(() => {
+        console.log("✓ TEST_FLOW completed");
+        app.quit();
+      }, 15000);
+    }
+
+    if (process.env.TEST_FALLBACK === "1") {
+      console.log("✓ TEST_FALLBACK: Testing UI fallback when companyId is missing");
+      mainWindow?.webContents.executeJavaScript(`
+        (async () => {
+          const googleBtn = document.getElementById("btn-connect-google");
+          if (googleBtn) {
+            googleBtn.click();
+          }
+          await new Promise(r => setTimeout(r, 600));
+          const errEl = document.getElementById("google-error-message");
+          console.log("[Fallback Result] Display style: " + errEl?.style.display + ", Text: " + errEl?.textContent?.trim());
+        })();
+      `);
+      setTimeout(() => {
+        console.log("✓ TEST_FALLBACK completed");
+        app.quit();
+      }, 3000);
     }
   });
 
@@ -672,23 +766,47 @@ ipcMain.handle("finlayer:select-company", async (_event, companyName: string) =>
 
 // 5. Start Google OAuth Flow
 ipcMain.handle("finlayer:start-google-auth", async (_event, companyId: string) => {
-  const url = `${API_URL}/google/connect/${companyId}`;
-  await shell.openExternal(url);
-  return { success: true, url };
-});
+  console.log("[MAIN] start-google-auth called", companyId);
 
-// 5b. Mock Google Connect for 1-click test/development
-ipcMain.handle("finlayer:mock-connect-google", async (_event, companyId: string) => {
+  // If companyId was not passed from renderer, recover from persistent local state
+  if (!companyId) {
+    const state = await loadLocalState();
+    if (state.companyId) {
+      companyId = state.companyId;
+      console.log("[MAIN] Recovered companyId from persistent state:", companyId);
+    } else if (state.connectorId && state.tallyCompanyName) {
+      try {
+        const selection = await selectCompanyForConnector(state.connectorId, state.tallyCompanyName);
+        if (selection && selection.companyId) {
+          state.companyId = selection.companyId;
+          companyId = selection.companyId;
+          await saveLocalState(state);
+          console.log("[MAIN] Dynamically mapped company and saved state:", companyId);
+        }
+      } catch (e) {
+        console.warn("[MAIN] Dynamic company selection failed:", e);
+      }
+    }
+  }
+
+  if (!companyId) {
+    console.error("[MAIN] Google auth failed: Company ID missing");
+    return {
+      success: false,
+      error: "Unable to connect Google. Company information missing.",
+    };
+  }
+
+  const oauthUrl = `${API_URL}/google/connect/${companyId}`;
+  console.log(`Opening browser:\n${oauthUrl}`);
+
   try {
-    const res = await fetch(`${API_URL}/google/mock-connect/${companyId}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
-    const data = await res.json();
-    return data;
+    await shell.openExternal(oauthUrl);
+    return { success: true, url: oauthUrl };
   } catch (err) {
-    return { success: false, error: String(err) };
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[MAIN] shell.openExternal failed: ${msg}`);
+    return { success: false, error: msg };
   }
 });
 
