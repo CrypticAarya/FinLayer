@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import crypto from "node:crypto";
+import { autoUpdater } from "electron-updater";
 
 // Reuse existing connector services and types
 import {
@@ -19,6 +20,7 @@ import {
   sendHeartbeatToApi,
   reportTallyConnected,
   reportTallyCompanies,
+  CONNECTOR_VERSION,
 } from "../../connector/src/api/client.js";
 import { startJobWorker, type JobWorkerHandle } from "../../connector/src/jobs/job-worker.js";
 import { config as connectorConfig } from "../../connector/src/config.js";
@@ -31,6 +33,7 @@ import type { ConnectorState } from "../../connector/src/state/state-store.js";
 
 const PRODUCTION_API_URL = "https://api.finlayer.com";
 const STAGING_API_URL = "http://192.168.88.25:4000";
+const DEFAULT_UPDATE_URL = "https://updates.finlayer.com/finlayer";
 
 function normalizeUrl(url: string): string {
   let trimmed = url.trim();
@@ -62,79 +65,71 @@ function parseEnvFile(filePath: string): Record<string, string> {
         }
       }
     }
-  } catch {}
+  } catch (err) {
+    console.warn("Could not parse .env file:", err);
+  }
   return result;
 }
 
-function parseJsonConfig(filePath: string): Record<string, any> {
-  try {
-    if (existsSync(filePath)) {
-      const content = readFileSync(filePath, "utf-8");
-      return JSON.parse(content);
-    }
-  } catch {}
-  return {};
-}
-
-function getCliApiUrl(): string | null {
+function resolveInitialApiUrl(): string {
+  // 1. Command-line argument: --api-url=... or --api-url ...
   for (let i = 0; i < process.argv.length; i++) {
     const arg = process.argv[i];
     if (arg.startsWith("--api-url=")) {
-      return arg.split("=")[1].trim();
+      const val = arg.split("=")[1];
+      if (val) return normalizeUrl(val);
     }
-    if (arg.startsWith("--apiUrl=")) {
-      return arg.split("=")[1].trim();
-    }
-    if (arg.startsWith("--finlayer-api-url=")) {
-      return arg.split("=")[1].trim();
-    }
-    if (
-      (arg === "--api-url" || arg === "--apiUrl" || arg === "--finlayer-api-url") &&
-      process.argv[i + 1]
-    ) {
-      return process.argv[i + 1].trim();
+    if (arg === "--api-url" && process.argv[i + 1]) {
+      return normalizeUrl(process.argv[i + 1]);
     }
   }
-  return null;
-}
 
-function resolveInitialApiUrl(): string {
-  // 1. Command-line flag (--api-url=http://...) - internal dev
-  const cliArg = getCliApiUrl();
-  if (cliArg) return normalizeUrl(cliArg);
+  // 2. Environment variable: FINLAYER_API_URL
+  if (process.env.FINLAYER_API_URL && process.env.FINLAYER_API_URL.trim()) {
+    return normalizeUrl(process.env.FINLAYER_API_URL.trim());
+  }
 
-  // 2. Explicit environment variables (FINLAYER_API_URL or API_URL) - internal dev
-  const envVar = process.env.FINLAYER_API_URL || process.env.API_URL;
-  if (envVar) return normalizeUrl(envVar);
+  // 3. Local/Packaged Configuration files
+  const searchDirs = [
+    process.cwd(),
+    __dirname,
+    path.join(__dirname, ".."),
+    path.join(__dirname, "../.."),
+  ];
 
-  // 3. Search for config files or .env files in candidates (internal dev)
-  const candidateDirs: string[] = [];
   try {
-    const isPackaged = app?.isPackaged || Boolean((process as any).pkg);
-    if (isPackaged) {
-      candidateDirs.push(path.dirname(process.execPath));
-    }
+    const userData = app.getPath("userData");
+    if (userData) searchDirs.unshift(userData);
   } catch {}
-  try {
-    candidateDirs.push(app.getPath("userData"));
-  } catch {}
-  candidateDirs.push(process.cwd());
 
-  for (const dir of candidateDirs) {
-    for (const fileName of ["config.json", "finlayer.config.json"]) {
-      const fullPath = path.join(dir, fileName);
-      const json = parseJsonConfig(fullPath);
-      const url = json.FINLAYER_API_URL || json.apiUrl || json.api_url || json.API_URL;
-      if (url && typeof url === "string" && url.trim()) {
-        return normalizeUrl(url);
+  // Check config.json / config.local.json
+  for (const dir of searchDirs) {
+    for (const name of ["config.json", "config.local.json"]) {
+      const p = path.join(dir, name);
+      if (existsSync(p)) {
+        try {
+          const content = JSON.parse(readFileSync(p, "utf-8"));
+          if (content.apiUrl && typeof content.apiUrl === "string") {
+            return normalizeUrl(content.apiUrl);
+          }
+          if (content.FINLAYER_API_URL && typeof content.FINLAYER_API_URL === "string") {
+            return normalizeUrl(content.FINLAYER_API_URL);
+          }
+        } catch {}
       }
     }
+  }
 
-    const envPath = path.join(dir, ".env");
-    const envFile = parseEnvFile(envPath);
-    const envUrl = envFile.FINLAYER_API_URL || envFile.API_URL;
-    if (envUrl && typeof envUrl === "string" && envUrl.trim()) {
-      return normalizeUrl(envUrl);
+  // Check .env / .env.local
+  for (const dir of searchDirs) {
+    for (const name of [".env", ".env.local"]) {
+      const p = path.join(dir, name);
+      if (existsSync(p)) {
+        const envVars = parseEnvFile(p);
+        if (envVars.FINLAYER_API_URL) {
+          return normalizeUrl(envVars.FINLAYER_API_URL);
+        }
+      }
     }
   }
 
@@ -147,20 +142,102 @@ function resolveInitialApiUrl(): string {
   return STAGING_API_URL;
 }
 
+function resolveUpdateUrl(): string {
+  if (process.env.FINLAYER_UPDATE_URL && process.env.FINLAYER_UPDATE_URL.trim()) {
+    return normalizeUrl(process.env.FINLAYER_UPDATE_URL.trim());
+  }
+  return DEFAULT_UPDATE_URL;
+}
+
+function resolveInitialTallyUrl(): string {
+  // 1. Command-line argument: --tally-url=... or --tally-url ...
+  for (let i = 0; i < process.argv.length; i++) {
+    const arg = process.argv[i];
+    if (arg.startsWith("--tally-url=")) {
+      const val = arg.split("=")[1];
+      if (val) return normalizeUrl(val);
+    }
+    if (arg === "--tally-url" && process.argv[i + 1]) {
+      return normalizeUrl(process.argv[i + 1]);
+    }
+  }
+
+  // 2. Environment variable: TALLY_URL
+  if (process.env.TALLY_URL && process.env.TALLY_URL.trim()) {
+    return normalizeUrl(process.env.TALLY_URL.trim());
+  }
+
+  // 3. Local/Packaged Configuration files
+  const searchDirs = [
+    process.cwd(),
+    __dirname,
+    path.join(__dirname, ".."),
+    path.join(__dirname, "../.."),
+  ];
+
+  try {
+    const userData = app.getPath("userData");
+    if (userData) searchDirs.unshift(userData);
+  } catch {}
+
+  // Check config.json / config.local.json
+  for (const dir of searchDirs) {
+    for (const name of ["config.json", "config.local.json"]) {
+      const p = path.join(dir, name);
+      if (existsSync(p)) {
+        try {
+          const content = JSON.parse(readFileSync(p, "utf-8"));
+          if (content.tallyUrl && typeof content.tallyUrl === "string") {
+            return normalizeUrl(content.tallyUrl);
+          }
+          if (content.TALLY_URL && typeof content.TALLY_URL === "string") {
+            return normalizeUrl(content.TALLY_URL);
+          }
+        } catch {}
+      }
+    }
+  }
+
+  // Check .env / .env.local
+  for (const dir of searchDirs) {
+    for (const name of [".env", ".env.local"]) {
+      const p = path.join(dir, name);
+      if (existsSync(p)) {
+        const envVars = parseEnvFile(p);
+        if (envVars.TALLY_URL) {
+          return normalizeUrl(envVars.TALLY_URL);
+        }
+      }
+    }
+  }
+
+  return "http://127.0.0.1:9000";
+}
+
 const API_URL = resolveInitialApiUrl();
-const TALLY_URL = process.env.TALLY_URL || "http://127.0.0.1:9000";
+let activeTallyUrl = resolveInitialTallyUrl();
 
 let mainWindow: BrowserWindow | null = null;
 let jobWorkerHandle: JobWorkerHandle | null = null;
 let heartbeatTimer: NodeJS.Timeout | null = null;
 
-function getStateFilePath(): string {
+// ─── Separate User State Storage (%APPDATA%/FinLayer/) ─────────────────────────
+
+function getUserDataDir(): string {
   try {
-    const userData = app.getPath("userData");
-    return path.join(userData, "connector-state.json");
+    return app.getPath("userData");
   } catch {
-    return path.join(process.cwd(), "connector-state.json");
+    const base = process.env.APPDATA || (process.platform === "darwin" ? path.join(os.homedir(), "Library", "Application Support") : path.join(os.homedir(), ".config"));
+    return path.join(base, "FinLayer");
   }
+}
+
+function getStateFilePath(): string {
+  return path.join(getUserDataDir(), "connector-state.json");
+}
+
+function getUpdateStateFilePath(): string {
+  return path.join(getUserDataDir(), "update-state.json");
 }
 
 async function loadLocalState(): Promise<ConnectorState> {
@@ -199,9 +276,103 @@ async function saveLocalState(state: ConnectorState): Promise<void> {
   }
 }
 
+interface UpdateState {
+  lastCheck: string;
+  availableVersion?: string;
+  downloadedVersion?: string;
+  status: "IDLE" | "CHECKING" | "AVAILABLE" | "DOWNLOADING" | "DOWNLOADED" | "ERROR";
+  error?: string;
+}
+
+async function loadUpdateState(): Promise<UpdateState> {
+  const filePath = getUpdateStateFilePath();
+  try {
+    if (existsSync(filePath)) {
+      const data = await fs.readFile(filePath, "utf-8");
+      return JSON.parse(data) as UpdateState;
+    }
+  } catch {}
+  return { lastCheck: "", status: "IDLE" };
+}
+
+async function saveUpdateState(state: Partial<UpdateState>): Promise<void> {
+  const filePath = getUpdateStateFilePath();
+  try {
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    const current = await loadUpdateState();
+    const merged = { ...current, ...state };
+    await fs.writeFile(filePath, JSON.stringify(merged, null, 2), "utf-8");
+  } catch (e) {
+    console.error("[AutoUpdater] Failed to save update state:", e);
+  }
+}
+
+// ─── Auto-Updater Engine ──────────────────────────────────────────────────────
+
+let pendingDownloadedUpdate: { version: string } | null = null;
+let isSetupActive = false;
+
+function setupAutoUpdater() {
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  const updateUrl = resolveUpdateUrl();
+  console.log(`[AutoUpdater] Configured update URL: ${updateUrl}`);
+
+  try {
+    autoUpdater.setFeedURL({
+      provider: "generic",
+      url: updateUrl,
+    });
+  } catch (err) {
+    console.warn("[AutoUpdater] Error setting feed URL:", err);
+  }
+
+  autoUpdater.on("checking-for-update", () => {
+    console.log("[AutoUpdater] Checking for updates silently...");
+    saveUpdateState({ status: "CHECKING", lastCheck: new Date().toISOString() });
+  });
+
+  autoUpdater.on("update-available", (info) => {
+    console.log(`[AutoUpdater] Update available: v${info.version}`);
+    saveUpdateState({ status: "AVAILABLE", availableVersion: info.version });
+  });
+
+  autoUpdater.on("update-not-available", () => {
+    console.log(`[AutoUpdater] App is up to date (current: v${app.getVersion()})`);
+    saveUpdateState({ status: "IDLE" });
+  });
+
+  autoUpdater.on("download-progress", (progress) => {
+    console.log(`[AutoUpdater] Download progress: ${Math.round(progress.percent)}%`);
+    saveUpdateState({ status: "DOWNLOADING" });
+  });
+
+  autoUpdater.on("update-downloaded", (info) => {
+    console.log(`[AutoUpdater] Update downloaded: v${info.version}`);
+    saveUpdateState({
+      status: "DOWNLOADED",
+      downloadedVersion: info.version,
+    });
+
+    // Only show update notification after setup is completed!
+    if (isSetupActive && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("finlayer:update-downloaded", { version: info.version });
+    } else {
+      pendingDownloadedUpdate = { version: info.version };
+      console.log("[AutoUpdater] Onboarding in progress: update notification deferred until setup completes.");
+    }
+  });
+
+  autoUpdater.on("error", (err) => {
+    console.log("[AutoUpdater] Silent error during update check/download:", err?.message || err);
+    saveUpdateState({ status: "ERROR", error: err?.message || String(err) });
+  });
+}
+
 function configureConnector(state?: ConnectorState) {
   connectorConfig.apiUrl = API_URL;
-  connectorConfig.tallyUrl = TALLY_URL;
+  connectorConfig.tallyUrl = activeTallyUrl;
   if (state?.tallyCompanyName) {
     connectorConfig.companyName = state.tallyCompanyName;
   }
@@ -211,10 +382,10 @@ function startBackgroundServices(connectorId: string) {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   if (jobWorkerHandle) jobWorkerHandle.stop();
 
-  // 1. Periodic heartbeat every 30s
+  // 1. Periodic heartbeat every 30s with connector version
   heartbeatTimer = setInterval(async () => {
     try {
-      await sendHeartbeatToApi(connectorId);
+      await sendHeartbeatToApi(connectorId, { version: CONNECTOR_VERSION });
     } catch {}
   }, 30000);
 
@@ -253,6 +424,16 @@ function createWindow(): void {
 
   mainWindow.once("ready-to-show", () => {
     mainWindow?.show();
+
+    // Trigger silent background update check on app startup (if not in automated testing mode)
+    if (process.env.TEST_VERIFY !== "1") {
+      setTimeout(() => {
+        autoUpdater.checkForUpdates().catch((err) => {
+          console.log("[AutoUpdater] Initial silent check skipped:", err.message);
+        });
+      }, 3000);
+    }
+
     if (process.env.TEST_VERIFY === "1") {
       console.log("✓ TEST_VERIFY: Main process started, BrowserWindow ready-to-show, renderer loaded");
       mainWindow?.webContents.executeJavaScript(`
@@ -275,50 +456,88 @@ function createWindow(): void {
 // 1. Get Initial App State
 ipcMain.handle("finlayer:get-initial-state", async () => {
   const state = await loadLocalState();
+  if (state.setupStatus === "ACTIVE") {
+    isSetupActive = true;
+  }
   configureConnector(state);
 
   return {
     success: true,
     state,
-    tallyUrl: TALLY_URL,
+    tallyUrl: activeTallyUrl,
+    appVersion: app.getVersion(),
+    connectorVersion: CONNECTOR_VERSION,
   };
 });
 
-// 2. Detect TallyPrime on http://127.0.0.1:9000
+// 2. Detect TallyPrime on activeTallyUrl (with localhost/127.0.0.1 fallback probe)
 ipcMain.handle("finlayer:detect-tally", async () => {
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4000);
-
-    const res = await fetch(TALLY_URL, {
-      method: "POST",
-      headers: { "Content-Type": "text/xml" },
-      body: getSimpleListOfCompaniesRequest(),
-      signal: controller.signal,
-    }).catch(() => null);
-
-    clearTimeout(timeout);
-
-    const connected = Boolean(res && (res.ok || res.status === 200 || res.status === 400));
-    return {
-      connected,
-      url: TALLY_URL,
-      statusText: connected ? "Connected" : "Not Connected",
-    };
-  } catch {
-    return {
-      connected: false,
-      url: TALLY_URL,
-      statusText: "Not Connected",
-    };
+  const candidateUrls = [activeTallyUrl];
+  if (activeTallyUrl.includes("127.0.0.1")) {
+    candidateUrls.push(activeTallyUrl.replace("127.0.0.1", "localhost"));
+  } else if (activeTallyUrl.includes("localhost")) {
+    candidateUrls.push(activeTallyUrl.replace("localhost", "127.0.0.1"));
   }
+
+  for (const probeUrl of candidateUrls) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3000);
+
+      const res = await fetch(probeUrl, {
+        method: "POST",
+        headers: { "Content-Type": "text/xml" },
+        body: getSimpleListOfCompaniesRequest(),
+        signal: controller.signal,
+      }).catch(() => null);
+
+      clearTimeout(timeout);
+
+      const connected = Boolean(res && (res.ok || res.status === 200 || res.status === 400));
+      if (connected) {
+        activeTallyUrl = probeUrl;
+        connectorConfig.tallyUrl = activeTallyUrl;
+        return {
+          connected: true,
+          url: activeTallyUrl,
+          statusText: "Connected",
+        };
+      }
+    } catch {}
+  }
+
+  return {
+    connected: false,
+    url: activeTallyUrl,
+    statusText: "Not Connected",
+  };
 });
 
 // 2b. Automatically detect active company and auto-map
 ipcMain.handle("finlayer:fetch-active-company", async () => {
   try {
-    const active = await fetchActiveCompany(TALLY_URL);
+    console.log(`[IPC] finlayer:fetch-active-company called. Probing Tally URL: ${activeTallyUrl}`);
+    let active = await fetchActiveCompany(activeTallyUrl);
+
+    // If active company wasn't found and we're on localhost/127.0.0.1, try alternative
     if (!active || !active.name) {
+      const alternate = activeTallyUrl.includes("127.0.0.1")
+        ? activeTallyUrl.replace("127.0.0.1", "localhost")
+        : activeTallyUrl.includes("localhost")
+        ? activeTallyUrl.replace("localhost", "127.0.0.1")
+        : null;
+      if (alternate) {
+        console.log(`[IPC] Attempting alternate Tally URL: ${alternate}`);
+        active = await fetchActiveCompany(alternate);
+        if (active && active.name) {
+          activeTallyUrl = alternate;
+          connectorConfig.tallyUrl = activeTallyUrl;
+        }
+      }
+    }
+
+    if (!active || !active.name) {
+      console.log("[IPC] No active company detected across all Tally strategies.");
       return {
         success: false,
         noCompanyOpen: true,
@@ -326,32 +545,44 @@ ipcMain.handle("finlayer:fetch-active-company", async () => {
     }
 
     const companyName = active.name;
+    console.log(`[IPC] Active company successfully detected: "${companyName}"`);
+
     const state = await loadLocalState();
+    state.tallyCompanyName = companyName;
     configureConnector(state);
 
-    // Ensure registered with API
+    // Ensure registered with API (graceful if API has network latency)
     if (!state.connectorId) {
-      const reg = await registerConnectorWithApi({
-        deviceId: state.deviceId,
-        deviceName: state.deviceName || "Windows-PC",
-        operatingSystem: "Windows 11 / 10",
-      });
-      state.connectorId = reg.connectorId;
-      state.setupStatus = "REGISTERED";
-      await saveLocalState(state);
+      try {
+        const reg = await registerConnectorWithApi({
+          deviceId: state.deviceId,
+          deviceName: state.deviceName || "Windows-PC",
+          operatingSystem: "Windows 11 / 10",
+        });
+        state.connectorId = reg.connectorId;
+        state.setupStatus = "REGISTERED";
+        await saveLocalState(state);
+      } catch (e) {
+        console.warn("[IPC] API registration postponed:", e);
+      }
     }
 
     // Report discovery to API
-    await reportTallyConnected(state.connectorId).catch(() => {});
-    await reportTallyCompanies(state.connectorId, [{ name: companyName }]).catch(() => {});
+    if (state.connectorId) {
+      await reportTallyConnected(state.connectorId).catch(() => {});
+      await reportTallyCompanies(state.connectorId, [{ name: companyName }]).catch(() => {});
 
-    // Automatically map company
-    const selection = await selectCompanyForConnector(state.connectorId, companyName);
-    state.companyId = selection.companyId;
-    state.tallyCompanyName = companyName;
-    state.setupStatus = "WAITING_FOR_GOOGLE";
+      // Automatically map company
+      try {
+        const selection = await selectCompanyForConnector(state.connectorId, companyName);
+        state.companyId = selection.companyId;
+        state.setupStatus = "WAITING_FOR_GOOGLE";
+      } catch (e) {
+        console.warn("[IPC] API company mapping postponed:", e);
+      }
+    }
+
     await saveLocalState(state);
-
     configureConnector(state);
 
     return {
@@ -362,6 +593,7 @@ ipcMain.handle("finlayer:fetch-active-company", async () => {
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    console.error("[IPC] finlayer:fetch-active-company error:", msg);
     return {
       success: false,
       error: msg,
@@ -373,7 +605,7 @@ ipcMain.handle("finlayer:fetch-active-company", async () => {
 ipcMain.handle("finlayer:fetch-tally-companies", async () => {
   try {
     const state = await loadLocalState();
-    const companies: TallyCompany[] = await fetchCompaniesFromTally(TALLY_URL);
+    const companies: TallyCompany[] = await fetchCompaniesFromTally(activeTallyUrl);
 
     // If connector is registered with API, report discovery
     if (state.connectorId) {
@@ -428,7 +660,6 @@ ipcMain.handle("finlayer:select-company", async (_event, companyName: string) =>
       success: true,
       companyId: state.companyId,
       connectorId: state.connectorId,
-      companyName,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -439,7 +670,7 @@ ipcMain.handle("finlayer:select-company", async (_event, companyName: string) =>
   }
 });
 
-// 5. Start Google OAuth in default browser
+// 5. Start Google OAuth Flow
 ipcMain.handle("finlayer:start-google-auth", async (_event, companyId: string) => {
   const url = `${API_URL}/google/connect/${companyId}`;
   await shell.openExternal(url);
@@ -482,9 +713,16 @@ ipcMain.handle("finlayer:complete-setup", async () => {
   state.setupStatus = "ACTIVE";
   await saveLocalState(state);
 
+  isSetupActive = true;
   configureConnector(state);
   if (state.connectorId) {
     startBackgroundServices(state.connectorId);
+  }
+
+  // If an update was downloaded during onboarding, notify user now that setup is complete
+  if (pendingDownloadedUpdate && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("finlayer:update-downloaded", pendingDownloadedUpdate);
+    pendingDownloadedUpdate = null;
   }
 
   return { success: true };
@@ -496,15 +734,51 @@ ipcMain.handle("finlayer:open-dashboard", async () => {
   return { success: true };
 });
 
+// 9. Get App & Connector Version
+ipcMain.handle("finlayer:get-app-version", async () => {
+  return {
+    appVersion: app.getVersion(),
+    connectorVersion: CONNECTOR_VERSION,
+    updateUrl: resolveUpdateUrl(),
+  };
+});
+
+// 10. Manual Check for Updates
+ipcMain.handle("finlayer:check-for-updates", async () => {
+  try {
+    const res = await autoUpdater.checkForUpdates();
+    return {
+      success: true,
+      updateInfo: res?.updateInfo ?? null,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+});
+
+// 11. Restart and Install Update
+ipcMain.handle("finlayer:restart-and-install", () => {
+  console.log("[AutoUpdater] User requested restart and install. Applying update...");
+  autoUpdater.quitAndInstall(false, true);
+  return { success: true };
+});
+
 // ─── App Lifecycle ────────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
   const state = await loadLocalState();
-  if (state.connectorId && state.setupStatus === "ACTIVE") {
-    configureConnector(state);
-    startBackgroundServices(state.connectorId);
+  if (state.setupStatus === "ACTIVE") {
+    isSetupActive = true;
+    if (state.connectorId) {
+      configureConnector(state);
+      startBackgroundServices(state.connectorId);
+    }
   }
 
+  setupAutoUpdater();
   createWindow();
 
   app.on("activate", () => {

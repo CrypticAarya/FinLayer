@@ -26,12 +26,19 @@
       ],
       "artifactName": "FinLayerSetup.exe"
     },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://updates.finlayer.com/finlayer"
+      }
+    ],
     "nsis": {
       "oneClick": true,
       "perMachine": false,
       "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false
     },
     "directories": {
       "output": "release",
@@ -44,6 +51,7 @@
     ]
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "fast-xml-parser": "^5.11.1"
   },
   "devDependencies": {

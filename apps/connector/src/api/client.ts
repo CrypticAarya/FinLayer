@@ -132,13 +132,17 @@ export interface HeartbeatApiResponse {
   tallyCompanyName?: string | null;
 }
 
+export const CONNECTOR_VERSION = "1.0.0";
+
 export async function sendHeartbeatToApi(
-  connectorId: string
+  connectorId: string,
+  extra?: { version?: string }
 ): Promise<HeartbeatApiResponse> {
+  const version = extra?.version ?? CONNECTOR_VERSION;
   const response = await fetch(`${config.apiUrl}/connectors/${connectorId}/heartbeat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
+    body: JSON.stringify({ version }),
   });
 
   if (!response.ok) {

@@ -70,6 +70,12 @@ const heartbeatSchema = {
       id: { type: "string" },
     },
   },
+  body: {
+    type: "object",
+    properties: {
+      version: { type: "string" },
+    },
+  },
 } as const;
 
 const connectorIdParamSchema = {
@@ -162,10 +168,11 @@ async function handleRegisterConnector(
 }
 
 async function handleHeartbeat(
-  request: FastifyRequest<{ Params: HeartbeatParams }>,
+  request: FastifyRequest<{ Params: HeartbeatParams; Body?: { version?: string } }>,
   reply: FastifyReply
 ): Promise<HeartbeatResponse> {
   const { id } = request.params;
+  const version = request.body?.version;
 
   const existing = await prisma.connector.findUnique({
     where: { id },
@@ -186,7 +193,7 @@ async function handleHeartbeat(
     },
   });
 
-  request.log.debug({ connectorId: id }, "Heartbeat updated");
+  request.log.debug({ connectorId: id, version }, "Heartbeat updated with version");
 
   return reply.status(200).send({
     success: true,

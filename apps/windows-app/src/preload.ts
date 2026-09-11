@@ -11,6 +11,10 @@ export interface FinlayerApi {
   checkGoogleStatus: (companyId: string) => Promise<{ connected: boolean; connection?: any }>;
   completeSetup: () => Promise<{ success: boolean }>;
   openDashboard: () => Promise<{ success: boolean }>;
+  getAppVersion: () => Promise<{ appVersion: string; connectorVersion: string; updateUrl: string }>;
+  checkForUpdates: () => Promise<{ success: boolean; updateInfo?: any; error?: string }>;
+  restartAndInstall: () => Promise<{ success: boolean }>;
+  onUpdateDownloaded: (callback: (data: { version: string }) => void) => () => void;
 }
 
 const api: FinlayerApi = {
@@ -24,6 +28,16 @@ const api: FinlayerApi = {
   checkGoogleStatus: (companyId: string) => ipcRenderer.invoke("finlayer:check-google-status", companyId),
   completeSetup: () => ipcRenderer.invoke("finlayer:complete-setup"),
   openDashboard: () => ipcRenderer.invoke("finlayer:open-dashboard"),
+  getAppVersion: () => ipcRenderer.invoke("finlayer:get-app-version"),
+  checkForUpdates: () => ipcRenderer.invoke("finlayer:check-for-updates"),
+  restartAndInstall: () => ipcRenderer.invoke("finlayer:restart-and-install"),
+  onUpdateDownloaded: (callback: (data: { version: string }) => void) => {
+    const listener = (_event: any, data: { version: string }) => callback(data);
+    ipcRenderer.on("finlayer:update-downloaded", listener);
+    return () => {
+      ipcRenderer.removeListener("finlayer:update-downloaded", listener);
+    };
+  },
 };
 
 contextBridge.exposeInMainWorld("finlayer", api);

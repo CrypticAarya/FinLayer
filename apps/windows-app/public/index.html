@@ -14,8 +14,17 @@
       <div class="brand-mark">F</div>
       <span>FinLayer <span style="font-weight:400;color:var(--muted)">Connector</span></span>
     </div>
-    <div class="app-version">v1.0.0 (Windows)</div>
+    <div class="app-version" id="app-version-badge">v1.0.0 (Windows)</div>
   </header>
+
+  <!-- ── Update Notification Banner (Shown only after setup is completed) ── -->
+  <div id="update-banner" class="update-banner" style="display:none;">
+    <div class="update-banner-info">
+      <span class="update-pulse-dot"></span>
+      <span>Update downloaded: <strong id="update-banner-version">v1.0.1</strong>. Restart now to apply.</span>
+    </div>
+    <button class="btn-update-restart" id="btn-restart-update">Restart &amp; Update</button>
+  </div>
 
   <!-- ── Stepper Indicator ── -->
   <div class="stepper">
@@ -91,7 +100,7 @@
       <!-- Company Found State -->
       <div id="company-found-view" style="display:none;">
         <div class="status-box" style="flex-direction:column;align-items:flex-start;gap:8px;margin-bottom:24px;">
-          <span class="status-box-label">Company Found</span>
+          <span class="status-box-label">Company Found:</span>
           <div class="company-name-text" id="detected-company-name">Loading…</div>
         </div>
         <button class="btn-primary" id="btn-continue-company">
@@ -178,6 +187,7 @@
   <!-- ── Footer ── -->
   <footer>
     <div id="footer-device">Device: Windows-PC</div>
+    <div id="footer-version">v1.0.0</div>
     <div id="footer-status">Status: Standby</div>
   </footer>
 

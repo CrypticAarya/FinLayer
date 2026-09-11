@@ -43,6 +43,11 @@
   const btnOpenDashboard = document.getElementById("btn-open-dashboard");
   const footerDevice = document.getElementById("footer-device");
   const footerStatus = document.getElementById("footer-status");
+  const footerVersion = document.getElementById("footer-version");
+  const appVersionBadge = document.getElementById("app-version-badge");
+  const updateBanner = document.getElementById("update-banner");
+  const updateBannerVersion = document.getElementById("update-banner-version");
+  const btnRestartUpdate = document.getElementById("btn-restart-update");
 
   // State
   let currentStep = 1;
@@ -278,6 +283,27 @@
     }
   });
 
+  // ── Auto-Update Handlers ───────────────────────────────────────────────────
+  if (btnRestartUpdate) {
+    btnRestartUpdate.addEventListener("click", async () => {
+      try {
+        await window.finlayer.restartAndInstall();
+      } catch (err) {
+        alert("Could not restart and install: " + err.message);
+      }
+    });
+  }
+
+  if (window.finlayer && window.finlayer.onUpdateDownloaded) {
+    window.finlayer.onUpdateDownloaded((data) => {
+      console.log("[Renderer] Update downloaded and ready to install:", data);
+      if (updateBanner && updateBannerVersion) {
+        updateBannerVersion.textContent = `v${data.version}`;
+        updateBanner.style.display = "flex";
+      }
+    });
+  }
+
   // ── Initialization ─────────────────────────────────────────────────────────
   window.addEventListener("DOMContentLoaded", async () => {
     console.log("DOMContentLoaded running");
@@ -295,8 +321,19 @@
           setFooter("FinLayer Connector Active 🟢");
         }
       }
+
+      // Populate version badges
+      const verInfo = await window.finlayer.getAppVersion();
+      if (verInfo) {
+        if (appVersionBadge) {
+          appVersionBadge.textContent = `v${verInfo.appVersion} (Windows)`;
+        }
+        if (footerVersion) {
+          footerVersion.textContent = `FinLayer v${verInfo.appVersion} | Connector v${verInfo.connectorVersion}`;
+        }
+      }
     } catch (err) {
-      console.warn("Failed to get initial state:", err);
+      console.warn("Failed to get initial state/version:", err);
     }
   });
 })();
