@@ -1,23 +1,20 @@
-import { config } from "./config.ts";
-import { registerAndStartHeartbeat } from "./services/registration-service.ts";
-import { startJobWorker } from "./jobs/job-worker.ts";
+import { config } from "./config.js";
+import { registerAndStartHeartbeat } from "./services/registration-service.js";
+import { startJobWorker } from "./jobs/job-worker.js";
+import { logger } from "./logger.js";
 
 async function main() {
-  console.log("FinLayer Connector started");
-
-  console.log("Configuration:");
-  console.log(config);
+  logger.info("FinLayer Connector started");
+  logger.info(`Configuration: apiUrl=${config.apiUrl} tallyUrl=${config.tallyUrl} company="${config.companyName}" connector="${config.connectorName}"`);
 
   const { connectorId } = await registerAndStartHeartbeat();
 
-  console.log(`FinLayer Connector active with ID: ${connectorId}`);
+  logger.info(`FinLayer Connector active with ID: ${connectorId}`);
 
   startJobWorker(connectorId);
 }
 
 main().catch((error) => {
-  console.error("Connector failed:");
-  console.error(error);
+  logger.error(`Connector failed: ${error instanceof Error ? error.message : String(error)}`);
   process.exit(1);
 });
-

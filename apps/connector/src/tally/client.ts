@@ -1,4 +1,4 @@
-import { config } from "../config.ts";
+import { config } from "../config.js";
 
 export async function sendToTally(xml: string): Promise<string> {
   const response = await fetch(config.tallyUrl, {

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FinLayer Setup Wizard</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- ── Header ── -->
+  <header>
+    <div class="brand">
+      <div class="brand-mark">F</div>
+      <span>FinLayer <span style="font-weight:400;color:var(--muted)">Connector</span></span>
+    </div>
+    <div class="app-version">v1.0.0 (Windows)</div>
+  </header>
+
+  <!-- ── Stepper Indicator ── -->
+  <div class="stepper">
+    <div class="step-dot-wrap active" id="dot-step-1">
+      <div class="step-dot">1</div>
+      <span>Welcome</span>
+    </div>
+    <div class="step-dot-wrap" id="dot-step-2">
+      <div class="step-dot">2</div>
+      <span>TallyPrime</span>
+    </div>
+    <div class="step-dot-wrap" id="dot-step-3">
+      <div class="step-dot">3</div>
+      <span>Company</span>
+    </div>
+    <div class="step-dot-wrap" id="dot-step-4">
+      <div class="step-dot">4</div>
+      <span>Google Sheet</span>
+    </div>
+    <div class="step-dot-wrap" id="dot-step-5">
+      <div class="step-dot">5</div>
+      <span>Ready</span>
+    </div>
+  </div>
+
+  <!-- ── Main Card Views ── -->
+  <main>
+
+    <!-- STEP 1: Welcome Screen -->
+    <div class="step-card active" id="card-step-1">
+      <div class="card-icon">⚡</div>
+      <h2>Welcome to FinLayer</h2>
+      <p class="subtitle">
+        Connect TallyPrime to your FinLayer Cloud Dashboard and Google Sheets in under 60 seconds.
+      </p>
+      <button class="btn-primary" id="btn-start-setup">
+        Start Setup &rarr;
+      </button>
+    </div>
+
+    <!-- STEP 2: Detect TallyPrime -->
+    <div class="step-card" id="card-step-2">
+      <div class="card-icon">🔍</div>
+      <h2>Detecting TallyPrime</h2>
+      <p class="subtitle">
+        Checking local connection to Tally XML server at <code style="color:var(--blue);font-family:var(--mono);">http://127.0.0.1:9000</code>.
+      </p>
+
+      <div class="status-box">
+        <span class="status-box-label">Tally Status</span>
+        <div class="status-badge" id="tally-status-badge">
+          <span class="status-dot red"></span>
+          <span id="tally-status-text">Checking…</span>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:12px;">
+        <button class="btn-secondary" id="btn-recheck-tally" style="flex:1;">↻ Check Again</button>
+        <button class="btn-primary" id="btn-continue-tally" style="flex:2;" disabled>
+          Continue &rarr;
+        </button>
+      </div>
+    </div>
+
+    <!-- STEP 3: Company Selection -->
+    <div class="step-card" id="card-step-3">
+      <div class="card-icon">🏢</div>
+      <h2>Select Company</h2>
+      <p class="subtitle">
+        Select which Tally company you want to sync with FinLayer.
+      </p>
+
+      <div class="form-group">
+        <label class="form-label" for="company-dropdown">Available Tally Companies</label>
+        <select class="app-select" id="company-dropdown">
+          <option value="">Loading companies from Tally…</option>
+        </select>
+      </div>
+
+      <button class="btn-primary" id="btn-confirm-company" disabled>
+        Confirm Company &rarr;
+      </button>
+    </div>
+
+    <!-- STEP 4: Google Sheet Connection -->
+    <div class="step-card" id="card-step-4">
+      <div class="card-icon">📊</div>
+      <h2>Google Sheet Connection</h2>
+      <p class="subtitle">
+        Authorize FinLayer to automatically sync your Trial Balance, Ledgers, and Transactions into Google Sheets.
+      </p>
+
+      <div class="status-box">
+        <span class="status-box-label">Google Sheet Status</span>
+        <div class="status-badge not-connected" id="google-status-badge">
+          <span class="status-dot red"></span>
+          <span id="google-status-text">Not Connected</span>
+        </div>
+      </div>
+
+      <button class="btn-primary" id="btn-connect-google">
+        Connect Google Account &rarr;
+      </button>
+
+      <div style="margin-top:12px;text-align:center;">
+        <button class="btn-secondary" id="btn-mock-google" style="font-size:0.75rem;padding:6px 14px;">
+          ⚡ 1-Click Demo Connect (Test Mode)
+        </button>
+      </div>
+
+      <button class="btn-primary" id="btn-continue-google" style="margin-top:16px;display:none;">
+        Continue to Final Step &rarr;
+      </button>
+    </div>
+
+    <!-- STEP 5: Final Screen (Setup Complete) -->
+    <div class="step-card" id="card-step-5">
+      <div class="card-icon">🎉</div>
+      <h2>Setup Complete</h2>
+      <p class="subtitle">
+        FinLayer Connector is active and will automatically synchronize your financial data.
+      </p>
+
+      <div class="checklist-card">
+        <div class="checklist-item">
+          <span>Tally Connected</span>
+          <span class="badge-check">✅ Connected</span>
+        </div>
+        <div class="checklist-item">
+          <span>Google Sheet Connected</span>
+          <span class="badge-check">✅ Connected</span>
+        </div>
+      </div>
+
+      <button class="btn-primary" id="btn-open-dashboard">
+        Open FinLayer Dashboard &rarr;
+      </button>
+    </div>
+
+  </main>
+
+  <!-- ── Footer ── -->
+  <footer>
+    <div id="footer-device">Device: Windows-PC</div>
+    <div id="footer-status">Status: Standby</div>
+  </footer>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

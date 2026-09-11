@@ -1,0 +1,4 @@
+{
+  "FINLAYER_API_URL": "http://192.168.88.25:4000",
+  "comment": "Place this file as config.json in the application folder or in %APPDATA%/FinLayer/ to configure API URL"
+}

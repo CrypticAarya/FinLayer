@@ -7,13 +7,29 @@
   "scripts": {
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "package:windows": "mkdir -p release && pkg dist/index.js --targets node22-win-x64 --no-bytecode --public --public-packages \"*\" --output release/FinLayerConnector.exe"
+  },
+  "pkg": {
+    "scripts": "dist/**/*.js",
+    "assets": [
+      "config.example.json"
+    ],
+    "targets": [
+      "node22-win-x64"
+    ],
+    "public": true,
+    "publicPackages": [
+      "*"
+    ]
   },
   "dependencies": {
     "fast-xml-parser": "^5.11.1"
   },
   "devDependencies": {
     "@types/node": "^26.5.0",
+    "@yao-pkg/pkg": "^6.22.0",
     "tsx": "^4.23.13"
   }
 }

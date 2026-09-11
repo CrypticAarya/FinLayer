@@ -1,11 +1,11 @@
-import { sendToTally } from "../tally/client.ts";
-import { getLedgers as getLedgerRequest } from "../tally/requests.ts";
-import { parseLedgers } from "../tally/parser.ts";
-import { compareLedgers } from "./ledger-sync.ts";
-import { loadState, saveState } from "../state/state-store.ts";
-import { sendLedgersToApi } from "../api/client.ts";
-import { config } from "../config.ts";
-import type { Ledger, SyncResult } from "./types.ts";
+import { sendToTally } from "../tally/client.js";
+import { getLedgers as getLedgerRequest } from "../tally/requests.js";
+import { parseLedgers } from "../tally/parser.js";
+import { compareLedgers } from "./ledger-sync.js";
+import { loadState, saveState } from "../state/state-store.js";
+import { sendLedgersToApi } from "../api/client.js";
+import { config } from "../config.js";
+import type { Ledger, SyncResult } from "./types.js";
 
 interface LedgerState {
   ledgers: Ledger[];

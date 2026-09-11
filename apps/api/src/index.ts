@@ -3,6 +3,8 @@ import { syncRoutes } from "./routes/sync.js";
 import { connectorRoutes } from "./routes/connectors.js";
 import { jobRoutes } from "./routes/jobs.js";
 import { v1Routes } from "./routes/v1/index.js";
+import { dashboardRoutes } from "./routes/dashboard.js";
+import { googleRoutes } from "./routes/google.js";
 
 const app = Fastify({ logger: true });
 
@@ -12,6 +14,8 @@ app.register(syncRoutes);
 app.register(connectorRoutes);
 app.register(jobRoutes);
 app.register(v1Routes, { prefix: "/v1" });
+app.register(dashboardRoutes);
+app.register(googleRoutes);
 
 
 app.listen({ port: PORT, host: "0.0.0.0" }, (err, address) => {

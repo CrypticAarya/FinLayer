@@ -1,5 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
-import type { Voucher, VoucherEntry } from "../sync/types.ts";
+import type { TrialBalanceItem, Voucher, VoucherEntry } from "../sync/types.js";
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -158,6 +158,163 @@ export function parseVouchers(xml: string): Voucher[] {
   }
 
   return parsedVouchers;
+}
+
+function parseAmountValue(val: any): number {
+  if (val == null) return 0;
+  const raw = extractValue(val);
+  if (typeof raw === "number") return isNaN(raw) ? 0 : raw;
+  if (typeof raw === "string") {
+    const cleaned = raw.replace(/,/g, "").trim();
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? 0 : num;
+  }
+  if (typeof raw === "object") {
+    const inner = raw.DSPAMTA ?? raw.DSPAMOUNT ?? raw.AMOUNT ?? raw["#text"];
+    return parseAmountValue(inner);
+  }
+  return 0;
+}
+
+export function parseTrialBalance(xml: string): TrialBalanceItem[] {
+  const result = parser.parse(xml);
+  if (!result) return [];
+
+  const bodyData =
+    result?.ENVELOPE?.BODY?.DATA ??
+    result?.BODY?.DATA ??
+    result?.ENVELOPE?.BODY?.IMPORTDATA?.REQUESTDATA ??
+    result;
+
+  const rawItems: any[] = [];
+
+  const collect = (node: any) => {
+    if (!node) return;
+    if (Array.isArray(node)) {
+      rawItems.push(...node);
+    } else if (typeof node === "object") {
+      rawItems.push(node);
+    }
+  };
+
+  if (bodyData?.COLLECTION?.LEDGER) {
+    collect(bodyData.COLLECTION.LEDGER);
+  }
+
+  if (bodyData?.TALLYMESSAGE) {
+    const messages = Array.isArray(bodyData.TALLYMESSAGE)
+      ? bodyData.TALLYMESSAGE
+      : [bodyData.TALLYMESSAGE];
+    for (const msg of messages) {
+      if (!msg || typeof msg !== "object") continue;
+      if (msg.LEDGER) collect(msg.LEDGER);
+      if (msg.TRIALBALANCE) collect(msg.TRIALBALANCE);
+      if (msg.LINE) collect(msg.LINE);
+      if (msg.DSPACCNAME) collect(msg.DSPACCNAME);
+    }
+  }
+
+  if (bodyData?.TRIALBALANCE) {
+    if (bodyData.TRIALBALANCE.ROW) collect(bodyData.TRIALBALANCE.ROW);
+    else if (bodyData.TRIALBALANCE.LINE) collect(bodyData.TRIALBALANCE.LINE);
+    else if (bodyData.TRIALBALANCE.LEDGER) collect(bodyData.TRIALBALANCE.LEDGER);
+    else if (Array.isArray(bodyData.TRIALBALANCE)) collect(bodyData.TRIALBALANCE);
+    else collect(bodyData.TRIALBALANCE);
+  }
+
+  if (bodyData?.DSPACCNAME) collect(bodyData.DSPACCNAME);
+  if (bodyData?.LINE) collect(bodyData.LINE);
+  if (bodyData?.ROW) collect(bodyData.ROW);
+  if (bodyData?.LEDGER) collect(bodyData.LEDGER);
+
+  const items: TrialBalanceItem[] = [];
+  let currentGroup = "Primary";
+
+  for (const raw of rawItems) {
+    if (!raw || typeof raw !== "object") continue;
+
+    const isGroup =
+      String(raw["@_ISGROUP"] ?? raw.ISGROUP ?? raw.DSPISGROUP ?? "").toLowerCase() === "yes" ||
+      String(raw["@_TYPE"] ?? raw.TYPE ?? "").toLowerCase() === "group";
+
+    const rawName =
+      raw.ledgerName ??
+      raw.LEDGERNAME ??
+      raw["@_NAME"] ??
+      extractValue(raw.NAME) ??
+      extractValue(raw.DSPDISPNAME) ??
+      extractValue(raw.DSPACCNAME?.DSPDISPNAME) ??
+      extractValue(raw.DSPACCNAME) ??
+      "";
+
+    const name = String(rawName).trim();
+    if (!name || name.toLowerCase() === "total" || name.toLowerCase() === "grand total") {
+      continue;
+    }
+
+    const explicitGroup =
+      raw.groupName ??
+      raw.GROUPNAME ??
+      extractValue(raw.PARENT) ??
+      extractValue(raw.parent) ??
+      extractValue(raw.DSPGROUPNAME) ??
+      "";
+
+    const groupStr = String(explicitGroup).trim();
+
+    if (isGroup) {
+      currentGroup = name;
+      const hasDebit = raw.DSPCLDRAMT != null || raw.debitAmount != null || raw.DEBITAMOUNT != null;
+      const hasCredit = raw.DSPCLCRAMT != null || raw.creditAmount != null || raw.CREDITAMOUNT != null;
+      const hasClosing = raw.CLOSINGBALANCE != null || raw.DSPCLRAMT != null;
+      if (!hasDebit && !hasCredit && !hasClosing) {
+        continue;
+      }
+    }
+
+    const assignedGroup = groupStr.length > 0 ? groupStr : (currentGroup || "Primary");
+
+    let debitAmount = 0;
+    let creditAmount = 0;
+
+    const debitNode = raw.debitAmount ?? raw.DEBITAMOUNT ?? raw.DSPCLDRAMT ?? raw.DSPCLDRAMTA ?? raw.DEBIT ?? raw.DR;
+    const creditNode = raw.creditAmount ?? raw.CREDITAMOUNT ?? raw.DSPCLCRAMT ?? raw.DSPCLCRAMTA ?? raw.CREDIT ?? raw.CR;
+
+    if (debitNode != null || creditNode != null) {
+      debitAmount = Math.abs(parseAmountValue(debitNode));
+      creditAmount = Math.abs(parseAmountValue(creditNode));
+    } else {
+      const balNode = raw.CLOSINGBALANCE ?? raw.DSPCLRAMT ?? raw.DSPCLRAMTA ?? raw.AMOUNT;
+      if (balNode != null) {
+        const balStr = String(extractValue(balNode) ?? "").trim().toLowerCase();
+        const numVal = parseAmountValue(balNode);
+        const isDeemedPositive = String(raw.ISDEEMEDPOSITIVE ?? "").trim().toLowerCase();
+
+        if (balStr.endsWith("dr") || balStr.includes("debit")) {
+          debitAmount = Math.abs(numVal);
+          creditAmount = 0;
+        } else if (balStr.endsWith("cr") || balStr.includes("credit")) {
+          debitAmount = 0;
+          creditAmount = Math.abs(numVal);
+        } else if (isDeemedPositive === "yes" || numVal < 0) {
+          debitAmount = Math.abs(numVal);
+          creditAmount = 0;
+        } else {
+          debitAmount = 0;
+          creditAmount = Math.abs(numVal);
+        }
+      }
+    }
+
+    items.push({
+      ledgerName: name,
+      groupName: assignedGroup,
+      debitAmount,
+      creditAmount,
+    });
+  }
+
+  return items;
 }
 
 

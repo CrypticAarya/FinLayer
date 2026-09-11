@@ -56,6 +56,24 @@ export interface GetCompanyVouchersResponse {
   vouchers: VoucherDto[];
 }
 
+export interface TrialBalanceEntryDto {
+  id: string;
+  ledgerName: string;
+  groupName: string;
+  debitAmount: number;
+  creditAmount: number;
+  updatedAt: string;
+}
+
+export interface GetCompanyTrialBalanceResponse {
+  companyId: string;
+  trialBalance: TrialBalanceEntryDto[];
+  totals: {
+    debitTotal: number;
+    creditTotal: number;
+  };
+}
+
 export interface TriggerSyncBody {
   type: string;
 }
@@ -287,6 +305,61 @@ async function handleGetCompanyVouchers(
 }
 
 /**
+ * GET /v1/companies/:companyId/trial-balance
+ * Return trial balance entries for a mapped company ordered by groupName, then ledgerName.
+ */
+async function handleGetCompanyTrialBalance(
+  request: FastifyRequest<{ Params: CompanyParams }>,
+  reply: FastifyReply
+): Promise<GetCompanyTrialBalanceResponse> {
+  const saasApp = request.saasApplication;
+  const { companyId } = request.params;
+
+  const mapping = await prisma.saasCompanyMapping.findUnique({
+    where: {
+      saasApplicationId_companyId: {
+        saasApplicationId: saasApp.id,
+        companyId,
+      },
+    },
+  });
+
+  if (!mapping) {
+    return reply.status(404).send({
+      success: false,
+      error: `Company "${companyId}" not found.`,
+    } as never);
+  }
+
+  const entries = await prisma.trialBalanceEntry.findMany({
+    where: { companyId },
+    orderBy: [
+      { groupName: "asc" },
+      { ledgerName: "asc" },
+    ],
+  });
+
+  const debitTotal = entries.reduce((sum, e) => sum + e.debitAmount, 0);
+  const creditTotal = entries.reduce((sum, e) => sum + e.creditAmount, 0);
+
+  return reply.status(200).send({
+    companyId,
+    trialBalance: entries.map((e) => ({
+      id: e.id,
+      ledgerName: e.ledgerName,
+      groupName: e.groupName,
+      debitAmount: e.debitAmount,
+      creditAmount: e.creditAmount,
+      updatedAt: e.updatedAt.toISOString(),
+    })),
+    totals: {
+      debitTotal,
+      creditTotal,
+    },
+  });
+}
+
+/**
  * POST /v1/companies/:companyId/sync
  * Trigger a sync job for an active connector belonging to the mapped company.
  */
@@ -317,10 +390,10 @@ async function handleTriggerSync(
 
   // 2. Validate sync type
   const normalizedType = (type ?? "").trim().toUpperCase();
-  if (!["LEDGERS", "VOUCHERS", "BOTH"].includes(normalizedType)) {
+  if (!["LEDGERS", "VOUCHERS", "BOTH", "TRIAL_BALANCE", "FINANCIAL_DATA"].includes(normalizedType)) {
     return reply.status(400).send({
       success: false,
-      error: `Invalid sync type "${type}". Supported types: LEDGERS, VOUCHERS, BOTH.`,
+      error: `Invalid sync type "${type}". Supported types: LEDGERS, VOUCHERS, BOTH, TRIAL_BALANCE, FINANCIAL_DATA.`,
     } as never);
   }
 
@@ -445,6 +518,7 @@ export async function v1Routes(app: FastifyInstance): Promise<void> {
   app.get("/companies", handleGetCompanies);
   app.get<{ Params: CompanyParams }>("/companies/:companyId/ledgers", handleGetCompanyLedgers);
   app.get<{ Params: CompanyParams }>("/companies/:companyId/vouchers", handleGetCompanyVouchers);
+  app.get<{ Params: CompanyParams }>("/companies/:companyId/trial-balance", handleGetCompanyTrialBalance);
   app.post<{ Params: CompanyParams; Body: TriggerSyncBody }>(
     "/companies/:companyId/sync",
     { schema: triggerSyncSchema },

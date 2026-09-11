@@ -1,7 +1,7 @@
-import { fetchLedgersFromTally } from "./tally-service.ts";
-import { sendLedgersToApi } from "../api/client.ts";
-import { config } from "../config.ts";
-import type { Ledger } from "../sync/types.ts";
+import { fetchLedgersFromTally } from "./tally-service.js";
+import { sendLedgersToApi } from "../api/client.js";
+import { config } from "../config.js";
+import type { Ledger } from "../sync/types.js";
 
 export async function syncLedgers(): Promise<Ledger[]> {
   const ledgers = await fetchLedgersFromTally();

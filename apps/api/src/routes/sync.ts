@@ -53,7 +53,52 @@ export interface SyncVouchersResponse {
   created: number;
 }
 
+// ─── Trial Balance Types ──────────────────────────────────────────────────────
+
+export interface TrialBalanceItemInput {
+  ledgerName: string;
+  groupName: string;
+  debitAmount: number;
+  creditAmount: number;
+}
+
+export interface SyncTrialBalanceBody {
+  company: string;
+  trialBalance: TrialBalanceItemInput[];
+}
+
+export interface SyncTrialBalanceResponse {
+  success: true;
+  company: string;
+  received: number;
+  created: number;
+  updated: number;
+}
+
 // ─── Schema (Fastify JSON Schema for validation) ──────────────────────────────
+
+const syncTrialBalanceSchema = {
+  body: {
+    type: "object",
+    required: ["company", "trialBalance"],
+    properties: {
+      company: { type: "string" },
+      trialBalance: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["ledgerName", "groupName", "debitAmount", "creditAmount"],
+          properties: {
+            ledgerName: { type: "string" },
+            groupName: { type: "string" },
+            debitAmount: { type: "number" },
+            creditAmount: { type: "number" },
+          },
+        },
+      },
+    },
+  },
+} as const;
 
 const syncLedgersSchema = {
   body: {
@@ -297,6 +342,85 @@ async function handleSyncVouchers(
   });
 }
 
+// ─── Route Handler: /sync/trial-balance ──────────────────────────────────────
+
+async function handleSyncTrialBalance(
+  request: FastifyRequest<{ Body: SyncTrialBalanceBody }>,
+  reply: FastifyReply
+): Promise<SyncTrialBalanceResponse> {
+  const { company: tallyCompanyName, trialBalance } = request.body;
+
+  request.log.info(
+    { company: tallyCompanyName, count: trialBalance.length },
+    "Received trial balance sync payload"
+  );
+
+  // 1. Find or create Company
+  const company = await prisma.company.upsert({
+    where: { tallyCompanyName },
+    update: { updatedAt: new Date() },
+    create: {
+      name: tallyCompanyName,
+      tallyCompanyName,
+    },
+  });
+
+  // 2. Upsert trial balance entries (keyed by companyId + ledgerName)
+  let created = 0;
+  let updated = 0;
+
+  for (const item of trialBalance) {
+    const existing = await prisma.trialBalanceEntry.findUnique({
+      where: {
+        companyId_ledgerName: {
+          companyId: company.id,
+          ledgerName: item.ledgerName,
+        },
+      },
+    });
+
+    if (!existing) {
+      await prisma.trialBalanceEntry.create({
+        data: {
+          companyId: company.id,
+          ledgerName: item.ledgerName,
+          groupName: item.groupName,
+          debitAmount: item.debitAmount,
+          creditAmount: item.creditAmount,
+        },
+      });
+      created++;
+    } else {
+      await prisma.trialBalanceEntry.update({
+        where: { id: existing.id },
+        data: {
+          groupName: item.groupName,
+          debitAmount: item.debitAmount,
+          creditAmount: item.creditAmount,
+        },
+      });
+      updated++;
+    }
+  }
+
+  request.log.info(
+    { company: tallyCompanyName, received: trialBalance.length, created, updated },
+    "Trial balance sync persisted"
+  );
+
+  console.log(
+    `[API POST /sync/trial-balance] Company: "${tallyCompanyName}" | Received: ${trialBalance.length} | Created: ${created} | Updated: ${updated}`
+  );
+
+  return reply.status(200).send({
+    success: true,
+    company: tallyCompanyName,
+    received: trialBalance.length,
+    created,
+    updated,
+  });
+}
+
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
 export async function syncRoutes(app: FastifyInstance): Promise<void> {
@@ -310,5 +434,11 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
     "/sync/vouchers",
     { schema: syncVouchersSchema },
     handleSyncVouchers
+  );
+
+  app.post<{ Body: SyncTrialBalanceBody }>(
+    "/sync/trial-balance",
+    { schema: syncTrialBalanceSchema },
+    handleSyncTrialBalance
   );
 }

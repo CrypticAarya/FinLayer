@@ -1,5 +1,5 @@
-import type { Ledger, Voucher } from "../sync/types.ts";
-import { config } from "../config.ts";
+import type { Ledger, Voucher, TrialBalanceItem } from "../sync/types.js";
+import { config } from "../config.js";
 
 export interface SendLedgersResponse {
   success: boolean;
@@ -56,16 +56,62 @@ export async function sendVouchersToApi(
   return (await response.json()) as SendVouchersResponse;
 }
 
+export interface SendTrialBalanceResponse {
+  success: boolean;
+  company: string;
+  received: number;
+  created: number;
+  updated: number;
+}
+
+export async function sendTrialBalanceToApi(
+  company: string,
+  trialBalance: TrialBalanceItem[]
+): Promise<SendTrialBalanceResponse> {
+  const response = await fetch(`${config.apiUrl}/sync/trial-balance`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ company, trialBalance }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "(no body)");
+    throw new Error(
+      `FinLayer API error: ${response.status} ${response.statusText} — ${text}`
+    );
+  }
+
+  return (await response.json()) as SendTrialBalanceResponse;
+}
+
+
+export interface RegisterConnectorParams {
+  deviceId: string;
+  deviceName: string;
+  operatingSystem: string;
+  company?: string;
+}
 
 export async function registerConnectorWithApi(
-  company: string,
-  name: string,
-  deviceId: string
+  params: RegisterConnectorParams | { company: string; name: string; deviceId: string }
 ): Promise<{ connectorId: string }> {
+  const payload = "deviceName" in params
+    ? {
+        deviceId: params.deviceId,
+        deviceName: params.deviceName,
+        operatingSystem: params.operatingSystem,
+        ...(params.company ? { company: params.company } : {}),
+      }
+    : {
+        company: params.company,
+        name: params.name,
+        deviceId: params.deviceId,
+      };
+
   const response = await fetch(`${config.apiUrl}/connectors/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ company, name, deviceId }),
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
@@ -79,9 +125,16 @@ export async function registerConnectorWithApi(
   return { connectorId: data.connectorId };
 }
 
+export interface HeartbeatApiResponse {
+  status: string;
+  setupStatus?: string;
+  companyId?: string | null;
+  tallyCompanyName?: string | null;
+}
+
 export async function sendHeartbeatToApi(
   connectorId: string
-): Promise<{ status: string }> {
+): Promise<HeartbeatApiResponse> {
   const response = await fetch(`${config.apiUrl}/connectors/${connectorId}/heartbeat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -95,8 +148,97 @@ export async function sendHeartbeatToApi(
     );
   }
 
-  const data = (await response.json()) as { success: boolean; status: string };
-  return { status: data.status };
+  const data = (await response.json()) as {
+    success: boolean;
+    status: string;
+    setupStatus?: string;
+    companyId?: string | null;
+    tallyCompanyName?: string | null;
+  };
+  return {
+    status: data.status,
+    setupStatus: data.setupStatus,
+    companyId: data.companyId,
+    tallyCompanyName: data.tallyCompanyName,
+  };
+}
+
+export async function reportTallyConnected(connectorId: string): Promise<void> {
+  const response = await fetch(`${config.apiUrl}/connectors/${connectorId}/tally-status`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "TALLY_CONNECTED" }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "(no body)");
+    throw new Error(
+      `Failed to report Tally status: ${response.status} ${response.statusText} — ${text}`
+    );
+  }
+}
+
+export async function reportTallyCompanies(
+  connectorId: string,
+  companies: Array<{ name: string }>
+): Promise<{ success: boolean }> {
+  const response = await fetch(`${config.apiUrl}/connectors/${connectorId}/tally-companies`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ companies }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "(no body)");
+    throw new Error(
+      `Failed to report Tally companies: ${response.status} ${response.statusText} — ${text}`
+    );
+  }
+
+  return (await response.json()) as { success: boolean };
+}
+
+export async function selectCompanyForConnector(
+  connectorId: string,
+  companyName: string
+): Promise<{ success: boolean; companyId: string; setupStatus: string }> {
+  const response = await fetch(`${config.apiUrl}/connectors/${connectorId}/company`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ companyName }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "(no body)");
+    throw new Error(
+      `Failed to select company for connector: ${response.status} ${response.statusText} — ${text}`
+    );
+  }
+
+  return (await response.json()) as {
+    success: boolean;
+    companyId: string;
+    setupStatus: string;
+  };
+}
+
+export async function fetchTallyCompaniesFromApi(
+  connectorId: string
+): Promise<{ success: boolean; setupStatus: string; companies: Array<{ name: string }> }> {
+  const response = await fetch(`${config.apiUrl}/connectors/${connectorId}/tally-companies`);
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "(no body)");
+    throw new Error(
+      `Failed to fetch Tally companies: ${response.status} ${response.statusText} — ${text}`
+    );
+  }
+
+  return (await response.json()) as {
+    success: boolean;
+    setupStatus: string;
+    companies: Array<{ name: string }>;
+  };
 }
 
 export interface SyncJob {

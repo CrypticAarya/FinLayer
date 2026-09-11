@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Setup — FinLayer</title>
+  <meta name="description" content="Configure your FinLayer connector and provision your company." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:#080f1e; --surface:#0e1a2e; --surface2:#152035;
+      --border:rgba(99,179,237,0.12); --border-2:rgba(99,179,237,0.22);
+      --text:#e2e8f0; --muted:#64748b;
+      --blue:#3b82f6; --purple:#a855f7; --green:#22c55e; --red:#ef4444;
+      --radius:14px; --radius-sm:8px;
+      --font:'Inter',system-ui,sans-serif; --mono:'JetBrains Mono','Fira Code',monospace;
+      --transition:0.2s cubic-bezier(.4,0,.2,1);
+    }
+    html { font-size:16px; }
+    body { font-family:var(--font); background:var(--bg); color:var(--text); min-height:100vh; -webkit-font-smoothing:antialiased; }
+
+    header {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:16px 32px; border-bottom:1px solid var(--border);
+      background:rgba(14,26,46,0.9); backdrop-filter:blur(16px);
+      position:sticky; top:0; z-index:50;
+    }
+    .logo { display:flex; align-items:center; gap:10px; font-size:1.05rem; font-weight:700; text-decoration:none; color:var(--text); }
+    .logo-mark { width:32px; height:32px; background:linear-gradient(135deg,var(--blue),var(--purple)); border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:16px; font-weight:800; color:#fff; }
+    nav { display:flex; align-items:center; gap:4px; }
+    nav a { padding:7px 14px; border-radius:var(--radius-sm); font-size:0.83rem; font-weight:500; color:var(--muted); text-decoration:none; transition:var(--transition); }
+    nav a:hover { color:var(--text); background:rgba(255,255,255,0.05); }
+    nav a.active { color:var(--blue); background:rgba(59,130,246,0.1); }
+
+    main { padding:48px 32px; max-width:760px; margin:0 auto; }
+
+    .page-title { font-size:1.6rem; font-weight:700; letter-spacing:-0.03em; margin-bottom:8px; }
+    .page-sub { color:var(--muted); font-size:0.9rem; margin-bottom:40px; line-height:1.6; }
+
+    /* Steps */
+    .steps { display:flex; flex-direction:column; gap:24px; }
+    .step-card {
+      background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+      overflow:hidden; transition:border-color var(--transition);
+    }
+    .step-card.done { border-color:rgba(34,197,94,0.3); }
+    .step-header { display:flex; align-items:center; gap:14px; padding:20px 24px; }
+    .step-num {
+      width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+      font-size:0.85rem; font-weight:700; flex-shrink:0;
+      background:rgba(59,130,246,0.12); color:var(--blue); border:1px solid rgba(59,130,246,0.25);
+    }
+    .step-card.done .step-num { background:rgba(34,197,94,0.12); color:var(--green); border-color:rgba(34,197,94,0.3); }
+    .step-title { font-size:1rem; font-weight:600; }
+    .step-desc { font-size:0.8rem; color:var(--muted); margin-top:2px; }
+    .step-body { padding:0 24px 24px; }
+
+    /* Form */
+    .field { margin-bottom:16px; }
+    .field label { display:block; font-size:0.78rem; font-weight:600; color:var(--muted); margin-bottom:7px; text-transform:uppercase; letter-spacing:0.05em; }
+    .field input {
+      width:100%; padding:11px 14px;
+      background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm);
+      color:var(--text); font-family:var(--font); font-size:0.88rem; outline:none;
+      transition:border-color var(--transition);
+    }
+    .field input::placeholder { color:var(--muted); }
+    .field input:focus { border-color:var(--blue); }
+    .field-hint { font-size:0.75rem; color:var(--muted); margin-top:5px; }
+    .field-row { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+
+    .submit-btn {
+      width:100%; padding:13px; border-radius:var(--radius-sm);
+      background:linear-gradient(135deg,var(--blue),var(--purple)); color:#fff; border:none;
+      font-family:var(--font); font-size:0.92rem; font-weight:700; cursor:pointer;
+      transition:var(--transition); box-shadow:0 4px 20px rgba(100,80,240,0.3);
+      margin-top:4px;
+    }
+    .submit-btn:hover { opacity:0.92; }
+    .submit-btn:disabled { opacity:0.45; cursor:not-allowed; }
+
+    /* Result panel */
+    .result-panel {
+      margin-top:28px; padding:20px 24px;
+      background:var(--surface2); border:1px solid rgba(34,197,94,0.3);
+      border-radius:var(--radius); display:none;
+    }
+    .result-panel.visible { display:block; }
+    .result-title { font-size:0.82rem; font-weight:700; color:var(--green); margin-bottom:14px; display:flex; align-items:center; gap:8px; }
+    .config-block {
+      background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-sm);
+      padding:16px; font-family:var(--mono); font-size:0.8rem; line-height:1.7;
+      color:#94a3b8; white-space:pre; overflow-x:auto; margin-bottom:14px;
+    }
+    .download-btn {
+      display:inline-flex; align-items:center; gap:8px;
+      padding:10px 20px; border-radius:var(--radius-sm);
+      background:rgba(34,197,94,0.12); color:var(--green); border:1px solid rgba(34,197,94,0.3);
+      font-family:var(--font); font-size:0.85rem; font-weight:600; cursor:pointer; text-decoration:none;
+      transition:var(--transition);
+    }
+    .download-btn:hover { background:rgba(34,197,94,0.2); }
+
+    /* Instruction list */
+    .instruction-list { display:flex; flex-direction:column; gap:10px; }
+    .inst { display:flex; gap:12px; align-items:flex-start; font-size:0.85rem; }
+    .inst-num { width:22px; height:22px; border-radius:50%; background:rgba(59,130,246,0.12); color:var(--blue); font-size:0.72rem; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:1px; }
+    .inst-text { color:var(--muted); line-height:1.6; }
+    .inst-text strong { color:var(--text); }
+    .code-inline { font-family:var(--mono); font-size:0.78rem; background:var(--surface2); padding:2px 7px; border-radius:4px; color:var(--blue); }
+
+    /* existing companies */
+    .existing-list { display:flex; flex-direction:column; gap:8px; }
+    .existing-item { display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); }
+    .existing-name { font-size:0.85rem; font-weight:500; }
+    .existing-tally { font-size:0.75rem; color:var(--muted); font-family:var(--mono); }
+    .existing-badge { font-size:0.72rem; font-weight:600; padding:2px 9px; border-radius:100px; background:rgba(34,197,94,0.12); color:var(--green); }
+
+    #toast-container { position:fixed; bottom:28px; right:28px; display:flex; flex-direction:column; gap:10px; z-index:999; }
+    .toast { padding:12px 20px; border-radius:var(--radius-sm); font-size:0.83rem; font-weight:500; background:var(--surface2); border:1px solid var(--border-2); box-shadow:0 8px 32px rgba(0,0,0,0.4); animation:slideIn .25s ease; max-width:340px; }
+    .toast.success { border-color:rgba(34,197,94,0.4); color:var(--green); }
+    .toast.error { border-color:rgba(239,68,68,0.4); color:var(--red); }
+    @keyframes slideIn { from{transform:translateX(20px);opacity:0} to{transform:translateX(0);opacity:1} }
+    .spin { display:inline-block; animation:spin .8s linear infinite; }
+    @keyframes spin { to{transform:rotate(360deg)} }
+  </style>
+</head>
+<body>
+<header>
+  <a href="/dashboard" class="logo">
+    <div class="logo-mark">F</div>
+    <span>FinLayer</span>
+  </a>
+  <nav>
+    <a href="/dashboard">Overview</a>
+    <a href="/dashboard/ledgers">Ledgers</a>
+    <a href="/dashboard/vouchers">Vouchers</a>
+    <a href="/dashboard/trial-balance">Trial Balance</a>
+    <a href="/setup/tally">Tally Onboarding</a>
+    <a href="/setup" class="active">Legacy Setup</a>
+  </nav>
+</header>
+
+<main>
+  <h1 class="page-title">Connector Setup</h1>
+  <p class="page-sub">Enter your company and TallyPrime details. FinLayer will register the company and generate a <code style="font-family:var(--mono);color:var(--blue)">config.json</code> file to place next to <code style="font-family:var(--mono);color:var(--blue)">FinLayerConnector.exe</code>.</p>
+
+  <div class="steps">
+
+    <!-- Step 1: Existing companies -->
+    <div class="step-card" id="step-existing">
+      <div class="step-header">
+        <div class="step-num">1</div>
+        <div>
+          <div class="step-title">Existing Companies</div>
+          <div class="step-desc">Companies already provisioned in FinLayer</div>
+        </div>
+      </div>
+      <div class="step-body">
+        <div class="existing-list" id="existing-list">
+          <div style="color:var(--muted);font-size:0.85rem">Loading…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2: Provision form -->
+    <div class="step-card" id="step-form">
+      <div class="step-header">
+        <div class="step-num">2</div>
+        <div>
+          <div class="step-title">Add / Update Company</div>
+          <div class="step-desc">Fill in your TallyPrime company details</div>
+        </div>
+      </div>
+      <div class="step-body">
+        <form id="setup-form" onsubmit="handleSubmit(event)">
+          <div class="field">
+            <label>Company Name <span style="color:var(--red)">*</span></label>
+            <input id="f-company" type="text" placeholder="Exact company name as it appears in TallyPrime" required />
+            <div class="field-hint">Must match the company name in TallyPrime exactly (case-sensitive).</div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Tally URL <span style="color:var(--red)">*</span></label>
+              <input id="f-tally" type="url" value="http://127.0.0.1:9000" required />
+              <div class="field-hint">TallyPrime XML server URL</div>
+            </div>
+            <div class="field">
+              <label>FinLayer API URL <span style="color:var(--red)">*</span></label>
+              <input id="f-api" type="url" value="http://localhost:4000" required />
+              <div class="field-hint">Where this API is running</div>
+            </div>
+          </div>
+          <div class="field">
+            <label>Connector Name</label>
+            <input id="f-connector" type="text" placeholder="FinLayer Connector (optional)" />
+            <div class="field-hint">Friendly label shown in the dashboard</div>
+          </div>
+          <button class="submit-btn" type="submit" id="submit-btn">
+            ✓ Provision Company &amp; Generate config.json
+          </button>
+        </form>
+
+        <!-- Result -->
+        <div class="result-panel" id="result-panel">
+          <div class="result-title">✓ Company provisioned successfully</div>
+          <p style="font-size:0.82rem;color:var(--muted);margin-bottom:12px">
+            Save the file below as <strong style="color:var(--text)">config.json</strong> and place it in the same folder as <strong style="color:var(--text)">FinLayerConnector.exe</strong>.
+          </p>
+          <div class="config-block" id="config-block"></div>
+          <button class="download-btn" id="download-btn" onclick="downloadConfig()">
+            ⬇ Download config.json
+          </button>
+          <div style="margin-top:16px;font-size:0.8rem;color:var(--muted)">
+            Company ID: <code style="font-family:var(--mono);color:var(--blue)" id="result-cid"></code>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 3: Instructions -->
+    <div class="step-card">
+      <div class="step-header">
+        <div class="step-num">3</div>
+        <div>
+          <div class="step-title">Run the Connector</div>
+          <div class="step-desc">Start syncing data from TallyPrime</div>
+        </div>
+      </div>
+      <div class="step-body">
+        <div class="instruction-list">
+          <div class="inst"><span class="inst-num">1</span><span class="inst-text">Make sure <strong>TallyPrime</strong> is open with the company loaded and the XML server enabled (Gateway of Tally → F12 → Enable XML server).</span></div>
+          <div class="inst"><span class="inst-num">2</span><span class="inst-text">Place <span class="code-inline">FinLayerConnector.exe</span> and <span class="code-inline">config.json</span> in the same folder on your Windows machine.</span></div>
+          <div class="inst"><span class="inst-num">3</span><span class="inst-text">Double-click <span class="code-inline">FinLayerConnector.exe</span> to start. It will register, then listen for sync commands.</span></div>
+          <div class="inst"><span class="inst-num">4</span><span class="inst-text">Return to the <a href="/dashboard" style="color:var(--blue)">Dashboard</a> and click <strong>Sync Everything</strong> to pull your first data from Tally.</span></div>
+          <div class="inst"><span class="inst-num">5</span><span class="inst-text">Browse <a href="/dashboard/ledgers" style="color:var(--blue)">Ledgers</a> and <a href="/dashboard/vouchers" style="color:var(--blue)">Vouchers</a> to verify the data.</span></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<div id="toast-container"></div>
+<script>
+const API = '';
+let configJson = null;
+
+function toast(msg,type='info',dur=3500){const el=document.createElement('div');el.className=`toast ${type}`;el.textContent=msg;document.getElementById('toast-container').appendChild(el);setTimeout(()=>el.remove(),dur);}
+
+async function loadExisting(){
+  try{
+    const d=await fetch(`${API}/dashboard/data`).then(r=>r.json());
+    const list=document.getElementById('existing-list');
+    const companies=(d.companies||[]);
+    if(!companies.length){list.innerHTML='<div style="color:var(--muted);font-size:0.85rem">No companies yet. Fill in the form below to add one.</div>';return;}
+    list.innerHTML=companies.map(c=>`
+      <div class="existing-item">
+        <div>
+          <div class="existing-name">${esc(c.name)}</div>
+          <div class="existing-tally">${esc(c.tallyCompanyName)}</div>
+        </div>
+        <span class="existing-badge">Provisioned</span>
+      </div>
+    `).join('');
+    document.getElementById('step-existing').classList.add('done');
+  }catch(e){document.getElementById('existing-list').innerHTML='<div style="color:var(--muted);font-size:0.85rem">Could not load companies.</div>';}
+}
+
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+async function handleSubmit(e){
+  e.preventDefault();
+  const btn=document.getElementById('submit-btn');
+  btn.disabled=true;btn.innerHTML='<span class="spin">↻</span> Provisioning…';
+
+  const body={
+    companyName:document.getElementById('f-company').value.trim(),
+    tallyUrl:document.getElementById('f-tally').value.trim(),
+    apiUrl:document.getElementById('f-api').value.trim(),
+    connectorName:document.getElementById('f-connector').value.trim()||undefined,
+  };
+
+  try{
+    const res=await fetch(`${API}/setup/provision`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await res.json();
+    if(!res.ok)throw new Error(d.error||'HTTP '+res.status);
+
+    configJson=d.connectorConfig;
+    const configStr=JSON.stringify(configJson,null,2);
+    document.getElementById('config-block').textContent=configStr;
+    document.getElementById('result-cid').textContent=d.companyId;
+    document.getElementById('result-panel').classList.add('visible');
+    document.getElementById('step-form').classList.add('done');
+    toast('✓ Company "'+d.companyName+'" provisioned','success');
+    loadExisting();
+  }catch(err){
+    toast('Error: '+err.message,'error');
+  }finally{
+    btn.disabled=false;btn.innerHTML='✓ Provision Company &amp; Generate config.json';
+  }
+}
+
+function downloadConfig(){
+  if(!configJson)return;
+  const blob=new Blob([JSON.stringify(configJson,null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='config.json';a.click();
+  toast('config.json downloaded','success');
+}
+
+loadExisting();
+</script>
+</body>
+</html>

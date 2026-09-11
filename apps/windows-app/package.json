@@ -1,0 +1,56 @@
+{
+  "name": "finlayer-windows-app",
+  "productName": "FinLayer",
+  "version": "1.0.0",
+  "description": "FinLayer Connector Desktop App for TallyPrime and Google Sheets",
+  "main": "dist/main.js",
+  "author": "FinLayer",
+  "scripts": {
+    "build:ts": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "build:win": "npm run build:ts && electron-builder --win --x64",
+    "build": "npm run build:win",
+    "start": "npm run build:ts && electron dist/main.js"
+  },
+  "build": {
+    "appId": "com.finlayer.connector",
+    "productName": "FinLayer",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "FinLayerSetup.exe"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "directories": {
+      "output": "release",
+      "buildResources": "assets"
+    },
+    "files": [
+      "dist/**/*",
+      "public/**/*",
+      "package.json"
+    ]
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.11.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.3"
+  }
+}

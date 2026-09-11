@@ -18,11 +18,14 @@ model Company {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  ledgers    Ledger[]
-  syncLogs   SyncLog[]
-  vouchers   Voucher[]
-  connectors Connector[]
-  mappings   SaasCompanyMapping[]
+  ledgers             Ledger[]
+  syncLogs            SyncLog[]
+  vouchers            Voucher[]
+  connectors          Connector[]
+  mappings            SaasCompanyMapping[]
+  trialBalanceEntries TrialBalanceEntry[]
+  googleConnection    GoogleConnection?
+  syncHistories       SyncHistory[]
 }
 
 model Ledger {
@@ -94,16 +97,19 @@ model VoucherEntry {
 // ─── Connector Models ─────────────────────────────────────────────────────────
 
 model Connector {
-  id            String   @id @default(cuid())
-  companyId     String
-  name          String
-  deviceId      String   @unique
-  status        String   @default("ONLINE")
-  lastHeartbeat DateTime @default(now())
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id               String    @id @default(cuid())
+  companyId        String?
+  name             String
+  deviceId         String    @unique
+  operatingSystem  String?
+  status           String    @default("ONLINE")
+  setupStatus      String    @default("REGISTERED")
+  tallyCompanyName String?
+  lastHeartbeat    DateTime  @default(now())
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  company  Company   @relation(fields: [companyId], references: [id])
+  company  Company?  @relation(fields: [companyId], references: [id])
   syncJobs SyncJob[]
 
   @@index([companyId])
@@ -152,6 +158,60 @@ model SaasCompanyMapping {
   @@index([saasApplicationId])
   @@index([companyId])
   @@index([externalCustomerId])
+}
+
+// ─── Trial Balance Models ─────────────────────────────────────────────────────
+
+model TrialBalanceEntry {
+  id           String   @id @default(cuid())
+  companyId    String
+  ledgerName   String
+  groupName    String
+  debitAmount  Float
+  creditAmount Float
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, ledgerName])
+  @@index([companyId])
+}
+
+// ─── Google Sheets Models ───────────────────────────────────────────────────
+
+model GoogleConnection {
+  id             String   @id @default(cuid())
+  companyId      String   @unique
+  googleEmail    String
+  refreshToken   String   // encrypted AES-256
+  spreadsheetId  String
+  spreadsheetUrl String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+}
+
+// ─── Sync History Models ───────────────────────────────────────────────────
+
+model SyncHistory {
+  id             String    @id @default(cuid())
+  companyId      String
+  syncType       String    // "FINANCIAL_DATA"
+  status         String    // "IN_PROGRESS" | "SUCCESS" | "FAILED"
+  startedAt      DateTime  @default(now())
+  completedAt    DateTime?
+  recordsUpdated Int       @default(0)
+  googleStatus   String?   // "SUCCESS" | "FAILED" | "SKIPPED"
+  googleError    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId])
+  @@index([companyId, createdAt])
 }
 
 

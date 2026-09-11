@@ -1,4 +1,4 @@
-import { config } from "../config.ts";
+import { config } from "../config.js";
 
 function escapeXml(unsafe: string): string {
   return unsafe.replace(/[<>&'"]/g, (c) => {
@@ -84,5 +84,37 @@ ${companyTag}
 }
 
 export const getVouchersRequest = getVouchers;
+
+export function getTrialBalance(
+  companyName: string = config.companyName,
+  fromDate: string = config.syncFromDate,
+  toDate: string = config.syncToDate
+): string {
+  const companyTag = companyName && companyName.trim().length > 0
+    ? `<SVCURRENTCOMPANY>${escapeXml(companyName)}</SVCURRENTCOMPANY>`
+    : "";
+
+  return `<ENVELOPE>
+<HEADER>
+<VERSION>1</VERSION>
+<TALLYREQUEST>Export</TALLYREQUEST>
+<TYPE>Data</TYPE>
+<ID>Trial Balance</ID>
+</HEADER>
+<BODY>
+<DESC>
+<STATICVARIABLES>
+<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+${companyTag}
+<SVFROMDATE TYPE="Date">${escapeXml(fromDate)}</SVFROMDATE>
+<SVTODATE TYPE="Date">${escapeXml(toDate)}</SVTODATE>
+<EXPLODEFLAG>Yes</EXPLODEFLAG>
+</STATICVARIABLES>
+</DESC>
+</BODY>
+</ENVELOPE>`;
+}
+
+export const getTrialBalanceRequest = getTrialBalance;
 
 

@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FinLayer — Sync History & Audit Log</title>
+  <meta name="description" content="Complete audit log of all financial data sync jobs between Tally and Google Sheets." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:         #070d19;
+      --surface:    #0d1728;
+      --surface2:     #132238;
+      --surface3:     #1b2d49;
+      --border:       rgba(99,179,237,0.14);
+      --border-2:     rgba(99,179,237,0.26);
+      --text:         #f1f5f9;
+      --text-muted:   #94a3b8;
+      --blue:         #3b82f6;
+      --green:        #10b981;
+      --red:          #ef4444;
+      --amber:        #f59e0b;
+      --radius:       16px;
+      --radius-sm:    10px;
+      --font:         'Inter', system-ui, sans-serif;
+      --mono:         'JetBrains Mono', monospace;
+      --transition:   0.2s ease;
+    }
+    body {
+      font-family: var(--font);
+      background: radial-gradient(circle at 50% 0%, #0f223f 0%, var(--bg) 75%);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.6;
+    }
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 32px; border-bottom: 1px solid var(--border);
+      background: rgba(13,23,40,0.85); backdrop-filter: blur(20px);
+      position: sticky; top: 0; z-index: 100;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; font-size: 1.15rem; font-weight: 700; text-decoration: none; color: inherit; }
+    .brand-mark {
+      width: 36px; height: 36px; background: linear-gradient(135deg, var(--blue), #a855f7);
+      border-radius: 10px; display: flex; align-items: center; justify-content: center;
+      font-size: 18px; font-weight: 800; color: #fff;
+    }
+    nav { display: flex; align-items: center; gap: 6px; }
+    nav a {
+      padding: 8px 14px; border-radius: var(--radius-sm); font-size: 0.84rem; font-weight: 500;
+      color: var(--text-muted); text-decoration: none; transition: var(--transition);
+    }
+    nav a:hover { color: var(--text); background: rgba(255,255,255,0.06); }
+    nav a.active { color: #fff; background: rgba(59,130,246,0.18); border: 1px solid rgba(59,130,246,0.3); }
+
+    main { padding: 28px 32px 48px; max-width: 1400px; margin: 0 auto; width: 100%; }
+
+    .top-controls { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+    .company-switcher {
+      display: flex; align-items: center; gap: 12px;
+      background: var(--surface); border: 1px solid var(--border);
+      padding: 8px 16px; border-radius: var(--radius-sm);
+    }
+    .company-switcher select {
+      background: transparent; border: none; color: #fff;
+      font-family: var(--font); font-size: 0.95rem; font-weight: 600; outline: none; cursor: pointer;
+    }
+    .company-switcher select option { background: #0f1c30; }
+
+    .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+    @media (max-width: 800px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+
+    .stat-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px;
+    }
+    .stat-label { font-size: 0.76rem; text-transform: uppercase; color: var(--text-muted); font-weight: 600; margin-bottom: 6px; }
+    .stat-val { font-size: 1.7rem; font-weight: 800; color: #fff; }
+
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 24px;
+    }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th {
+      text-align: left; padding: 12px 16px; color: var(--text-muted); font-size: 0.74rem;
+      text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border);
+    }
+    td { padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,0.04); color: var(--text); }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+
+    .job-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px; border-radius: 100px;
+      font-size: 0.74rem; font-weight: 700; text-transform: uppercase;
+    }
+    .job-badge.SUCCESS, .job-badge.COMPLETED { background: rgba(16,185,129,0.16); color: var(--green); border: 1px solid rgba(16,185,129,0.3); }
+    .job-badge.IN_PROGRESS, .job-badge.PENDING { background: rgba(245,158,11,0.16); color: var(--amber); border: 1px solid rgba(245,158,11,0.3); }
+    .job-badge.FAILED { background: rgba(239,68,68,0.16); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
+
+    footer { text-align: center; padding: 24px; font-size: 0.76rem; color: var(--text-muted); border-top: 1px solid var(--border); }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="/dashboard" class="brand">
+      <div class="brand-mark">F</div>
+      <span>FinLayer <span style="color:var(--text-muted);font-weight:400">/ SaaS Dashboard</span></span>
+    </a>
+    <nav>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/dashboard#financial-overview">Financial Overview</a>
+      <a href="/dashboard/trial-balance">Trial Balance</a>
+      <a href="/dashboard/ledgers">Ledgers</a>
+      <a href="/dashboard/vouchers">Transactions</a>
+      <a href="/dashboard/sync-history" class="active">Sync History</a>
+      <a href="/setup">Settings</a>
+    </nav>
+  </header>
+
+  <main>
+    <div class="top-controls">
+      <div class="company-switcher">
+        <label for="company-select">Company:</label>
+        <select id="company-select" onchange="onCompanyChange()">
+          <option value="">Loading companies…</option>
+        </select>
+      </div>
+      <div>
+        <a href="/dashboard" style="color:var(--blue);text-decoration:none;font-size:0.84rem;font-weight:600;">&larr; Back to Dashboard</a>
+      </div>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Total Sync Runs</div>
+        <div class="stat-val" id="stat-total">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Successful Syncs</div>
+        <div class="stat-val" id="stat-success" style="color:var(--green);">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Total Records Processed</div>
+        <div class="stat-val" id="stat-records">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Last Sync Date</div>
+        <div class="stat-val" id="stat-last" style="font-size:1.1rem;padding-top:6px;">—</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="font-size:1.05rem;font-weight:700;margin-bottom:16px;">Sync Execution Log</h3>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Date & Time</th>
+              <th>Job Type</th>
+              <th>Status</th>
+              <th>Records Updated</th>
+              <th>Google Sheet Sync</th>
+            </tr>
+          </thead>
+          <tbody id="history-tbody">
+            <tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-muted);">Loading sync history…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    FinLayer Platform &copy; 2026 — Enterprise TallyPrime Sync & Financial Intelligence
+  </footer>
+
+  <script>
+    let companies = [];
+    let selectedCompanyId = null;
+
+    async function init() {
+      try {
+        const res = await fetch('/dashboard/data');
+        const data = await res.json();
+        companies = data.companies || [];
+        const sel = document.getElementById('company-select');
+        sel.innerHTML = '';
+        if (companies.length === 0) {
+          sel.innerHTML = '<option>No companies</option>';
+          return;
+        }
+        companies.forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c.id;
+          opt.textContent = `${c.name} (${c.tallyCompanyName})`;
+          sel.appendChild(opt);
+        });
+        selectedCompanyId = companies[0].id;
+        loadHistory(selectedCompanyId);
+      } catch(e) {
+        console.error(e);
+      }
+    }
+
+    function onCompanyChange() {
+      const sel = document.getElementById('company-select');
+      selectedCompanyId = sel.value;
+      loadHistory(selectedCompanyId);
+    }
+
+    async function loadHistory(companyId) {
+      if (!companyId) return;
+      const tbody = document.getElementById('history-tbody');
+      try {
+        const res = await fetch(`/dashboard/sync-history/${companyId}`);
+        const data = await res.json();
+        const history = data.history || [];
+
+        document.getElementById('stat-total').textContent = history.length;
+        document.getElementById('stat-success').textContent = history.filter(h => h.status === 'SUCCESS').length;
+        const totalRec = history.reduce((sum, h) => sum + (Number(h.recordsUpdated) || 0), 0);
+        document.getElementById('stat-records').textContent = totalRec.toLocaleString('en-IN');
+        document.getElementById('stat-last').textContent = history[0]?.formattedDate ? `${history[0].formattedDate}, ${history[0].formattedTime}` : '—';
+
+        if (history.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-muted);">No sync history records found.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = history.map(h => `
+          <tr>
+            <td><strong>${h.formattedDate}</strong> <span style="color:var(--text-muted);font-size:0.75rem;">${h.formattedTime}</span></td>
+            <td><code style="background:var(--surface2);padding:2px 6px;border-radius:4px;font-family:var(--mono);">${h.syncType}</code></td>
+            <td><span class="job-badge ${h.status}">${h.status}</span></td>
+            <td><strong>${Number(h.recordsUpdated || 0).toLocaleString('en-IN')}</strong> records</td>
+            <td>
+              <span class="job-badge ${h.googleStatus === 'SUCCESS' ? 'SUCCESS' : (h.googleStatus === 'FAILED' ? 'FAILED' : 'none')}">
+                ${h.googleStatus || 'SKIPPED'}
+              </span>
+            </td>
+          </tr>
+        `).join('');
+      } catch(e) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--red);padding:24px;">Failed to load sync history.</td></tr>';
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>

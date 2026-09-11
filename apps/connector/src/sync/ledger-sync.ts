@@ -1,4 +1,4 @@
-import type { Ledger, SyncResult } from "./types.ts";
+import type { Ledger, SyncResult } from "./types.js";
 
 export function compareLedgers(
   previous: Ledger[],

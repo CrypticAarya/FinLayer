@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import prisma from "../db/prisma.js";
+import { syncCompanyFinancialDataToGoogleSheets } from "../services/google-sheet-sync-service.js";
 
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -103,6 +104,16 @@ async function handleStartSyncJob(
     },
   });
 
+  if (connector.companyId) {
+    await prisma.syncHistory.create({
+      data: {
+        companyId: connector.companyId,
+        syncType: type,
+        status: "IN_PROGRESS",
+      },
+    });
+  }
+
   request.log.info(
     { jobId: job.id, connectorId, type },
     "Created pending sync job"
@@ -170,6 +181,7 @@ async function handleCompleteJob(
 
   const job = await prisma.syncJob.findUnique({
     where: { id },
+    include: { connector: true },
   });
 
   if (!job) {
@@ -188,6 +200,77 @@ async function handleCompleteJob(
   });
 
   request.log.info({ jobId: id }, "Sync job completed");
+
+  // If connector is linked to a company, track SyncHistory & perform decoupled Google Sheets sync
+  const companyId = job.connector?.companyId;
+  if (companyId) {
+    // 1. Calculate total records updated in this sync
+    const [tbCount, ledgerCount, voucherCount] = await Promise.all([
+      prisma.trialBalanceEntry.count({ where: { companyId } }),
+      prisma.ledger.count({ where: { companyId } }),
+      prisma.voucher.count({ where: { companyId } }),
+    ]);
+    const totalRecords = tbCount + ledgerCount + voucherCount;
+
+    // 2. Decoupled Google Sheets export
+    let googleStatus: "SUCCESS" | "FAILED" | "SKIPPED" = "SKIPPED";
+    let googleError: string | null = null;
+
+    const googleConn = await prisma.googleConnection.findUnique({
+      where: { companyId },
+    });
+
+    if (googleConn) {
+      try {
+        const sheetRes = await syncCompanyFinancialDataToGoogleSheets(companyId);
+        if (sheetRes.success) {
+          googleStatus = "SUCCESS";
+        } else {
+          googleStatus = "FAILED";
+          googleError = sheetRes.error || "Google Sheets update returned unsuccessful status";
+        }
+      } catch (gErr) {
+        googleStatus = "FAILED";
+        googleError = gErr instanceof Error ? gErr.message : String(gErr);
+        request.log.error(gErr, "Decoupled Google Sheets export error");
+      }
+    }
+
+    // 3. Update pending SyncHistory or create a new completed one
+    const history = await prisma.syncHistory.findFirst({
+      where: {
+        companyId,
+        syncType: job.type,
+        status: "IN_PROGRESS",
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (history) {
+      await prisma.syncHistory.update({
+        where: { id: history.id },
+        data: {
+          status: "SUCCESS",
+          completedAt: new Date(),
+          recordsUpdated: totalRecords,
+          googleStatus,
+          googleError,
+        },
+      });
+    } else {
+      await prisma.syncHistory.create({
+        data: {
+          companyId,
+          syncType: job.type,
+          status: "SUCCESS",
+          completedAt: new Date(),
+          recordsUpdated: totalRecords,
+          googleStatus,
+          googleError,
+        },
+      });
+    }
+  }
 
   return reply.status(200).send({
     success: true,

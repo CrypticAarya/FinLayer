@@ -1,0 +1,6 @@
+{
+  "apiUrl": "http://localhost:4000",
+  "tallyUrl": "http://127.0.0.1:9000",
+  "companyName": "FinLayer Test Company",
+  "connectorName": "FinLayer Connector"
+}

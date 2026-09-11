@@ -26,3 +26,12 @@ export interface Voucher {
   entries: VoucherEntry[];
 }
 
+export interface TrialBalanceItem {
+  ledgerName: string;
+  groupName: string;
+  debitAmount: number;
+  creditAmount: number;
+}
+
+export type SyncJobType = "LEDGERS" | "VOUCHERS" | "BOTH" | "TRIAL_BALANCE" | "FINANCIAL_DATA";
+

@@ -1,0 +1,979 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FinLayer — Customer SaaS Dashboard</title>
+  <meta name="description" content="FinLayer Financial Intelligence Platform — Real-time Tally sync and automated Google Sheets export." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset & Theme ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:           #070d19;
+      --surface:      #0d1728;
+      --surface2:     #132238;
+      --surface3:     #1b2d49;
+      --border:       rgba(99,179,237,0.14);
+      --border-2:     rgba(99,179,237,0.26);
+      --text:         #f1f5f9;
+      --text-muted:   #94a3b8;
+      --blue:         #3b82f6;
+      --blue-glow:    rgba(59,130,246,0.25);
+      --indigo:       #6366f1;
+      --purple:       #a855f7;
+      --green:        #10b981;
+      --green-glow:   rgba(16,185,129,0.25);
+      --red:          #ef4444;
+      --amber:        #f59e0b;
+      --cyan:         #06b6d4;
+      --radius:       16px;
+      --radius-sm:    10px;
+      --font:         'Inter', system-ui, -apple-system, sans-serif;
+      --mono:         'JetBrains Mono', monospace;
+      --transition:   0.2s cubic-bezier(.4,0,.2,1);
+    }
+    html { font-size: 16px; scroll-behavior: smooth; }
+    body {
+      font-family: var(--font);
+      background: radial-gradient(circle at 50% 0%, #0f223f 0%, var(--bg) 75%);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Layout ── */
+    .shell { display: flex; flex-direction: column; min-height: 100vh; }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 32px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(13,23,40,0.85);
+      backdrop-filter: blur(20px);
+      position: sticky; top: 0; z-index: 100;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; font-size: 1.15rem; font-weight: 700; text-decoration: none; color: inherit; }
+    .brand-mark {
+      width: 36px; height: 36px;
+      background: linear-gradient(135deg, var(--blue), var(--purple));
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; font-weight: 800; color: #fff;
+      box-shadow: 0 4px 16px var(--blue-glow);
+    }
+    nav { display: flex; align-items: center; gap: 6px; }
+    nav a {
+      padding: 8px 14px; border-radius: var(--radius-sm); font-size: 0.84rem; font-weight: 500;
+      color: var(--text-muted); text-decoration: none; transition: var(--transition);
+    }
+    nav a:hover { color: var(--text); background: rgba(255,255,255,0.06); }
+    nav a.active { color: #fff; background: rgba(59,130,246,0.18); border: 1px solid rgba(59,130,246,0.3); }
+
+    .header-actions { display: flex; align-items: center; gap: 14px; }
+    .refresh-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 16px; border-radius: var(--radius-sm);
+      border: 1px solid var(--border-2);
+      background: var(--surface2); color: var(--text);
+      font-family: var(--font); font-size: 0.8rem; font-weight: 600;
+      cursor: pointer; transition: var(--transition);
+    }
+    .refresh-btn:hover { border-color: var(--blue); background: var(--surface3); }
+
+    main { flex: 1; padding: 28px 32px 48px; max-width: 1480px; margin: 0 auto; width: 100%; }
+
+    /* ── Top Bar (Company Switcher) ── */
+    .top-controls {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 24px; gap: 16px; flex-wrap: wrap;
+    }
+    .company-switcher {
+      display: flex; align-items: center; gap: 12px;
+      background: var(--surface); border: 1px solid var(--border);
+      padding: 8px 16px; border-radius: var(--radius-sm);
+    }
+    .company-switcher label { font-size: 0.78rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.04em; }
+    .company-switcher select {
+      background: transparent; border: none; color: #fff;
+      font-family: var(--font); font-size: 0.95rem; font-weight: 600;
+      outline: none; cursor: pointer; padding-right: 12px;
+    }
+    .company-switcher select option { background: #0f1c30; color: #fff; }
+
+    /* ── Hero Grid ── */
+    .hero-grid {
+      display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px;
+      margin-bottom: 24px;
+    }
+    @media (max-width: 1024px) {
+      .hero-grid { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+      position: relative;
+    }
+    .card-title {
+      font-size: 0.8rem; font-weight: 700; letter-spacing: 0.06em;
+      color: var(--text-muted); text-transform: uppercase; margin-bottom: 16px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+
+    /* ── Company Overview Card ── */
+    .company-overview-header {
+      display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px;
+    }
+    .company-display-name {
+      font-size: 1.65rem; font-weight: 800; letter-spacing: -0.02em; color: #fff;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .company-id-badge {
+      font-family: var(--mono); font-size: 0.75rem; color: var(--text-muted);
+      background: rgba(255,255,255,0.05); padding: 2px 8px; border-radius: 6px;
+    }
+
+    .connectivity-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+      margin-top: 14px; margin-bottom: 16px;
+    }
+    @media (max-width: 640px) {
+      .connectivity-grid { grid-template-columns: 1fr; }
+    }
+    .conn-pill {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 14px;
+      display: flex; flex-direction: column; gap: 4px;
+      transition: var(--transition);
+    }
+    .conn-pill:hover { border-color: var(--border-2); background: var(--surface3); }
+    .conn-pill .pill-label { font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); font-weight: 600; }
+    .conn-pill .pill-status {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 0.86rem; font-weight: 700;
+    }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .status-dot.green  { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .status-dot.red    { background: var(--red); box-shadow: 0 0 8px var(--red); }
+    .status-dot.gray   { background: #64748b; }
+    .status-dot.pulse  { animation: pulseDot 1.8s infinite; }
+    @keyframes pulseDot { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+    .sheet-link-btn {
+      font-size: 0.78rem; color: var(--blue); text-decoration: none; font-weight: 600;
+      display: inline-flex; align-items: center; gap: 4px; margin-top: 2px;
+    }
+    .sheet-link-btn:hover { text-decoration: underline; }
+
+    /* ── Sync Section Card ── */
+    .sync-card-body { display: flex; flex-direction: column; gap: 16px; }
+    .btn-sync-hero {
+      background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+      color: #fff; border: none;
+      padding: 16px 28px; border-radius: var(--radius-sm);
+      font-family: var(--font); font-size: 1.02rem; font-weight: 700;
+      cursor: pointer; transition: all var(--transition);
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      box-shadow: 0 6px 24px rgba(99,102,241,0.35);
+      width: 100%;
+    }
+    .btn-sync-hero:hover {
+      box-shadow: 0 8px 32px rgba(124,58,237,0.5);
+      transform: translateY(-2px);
+    }
+    .btn-sync-hero:active { transform: translateY(0); }
+    .btn-sync-hero:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+    .sync-telemetry {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 14px 18px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .tele-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; }
+    .tele-row .label { color: var(--text-muted); }
+    .tele-row .value { font-weight: 600; font-family: var(--font); }
+    .job-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px; border-radius: 100px;
+      font-size: 0.74rem; font-weight: 700; text-transform: uppercase;
+    }
+    .job-badge.COMPLETED, .job-badge.SUCCESS { background: rgba(16,185,129,0.16); color: var(--green); border: 1px solid rgba(16,185,129,0.3); }
+    .job-badge.PENDING, .job-badge.IN_PROGRESS { background: rgba(245,158,11,0.16); color: var(--amber); border: 1px solid rgba(245,158,11,0.3); }
+    .job-badge.FAILED    { background: rgba(239,68,68,0.16); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
+    .job-badge.none, .job-badge.IDLE { background: rgba(100,116,139,0.14); color: var(--text-muted); }
+
+    /* ── Financial Summary 6-Card Grid ── */
+    .section-title {
+      font-size: 1.15rem; font-weight: 800; letter-spacing: -0.01em;
+      margin-bottom: 16px; display: flex; align-items: center; gap: 10px;
+    }
+    .summary-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px;
+      margin-bottom: 28px;
+    }
+    @media (max-width: 900px) {
+      .summary-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 580px) {
+      .summary-grid { grid-template-columns: 1fr; }
+    }
+    .fin-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 22px;
+      display: flex; flex-direction: column; justify-content: space-between;
+      position: relative; overflow: hidden;
+      transition: var(--transition);
+    }
+    .fin-card:hover {
+      border-color: var(--border-2);
+      transform: translateY(-2px);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+    }
+    .fin-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+      background: var(--card-accent, var(--blue));
+    }
+    .fin-card.c-revenue     { --card-accent: linear-gradient(90deg, #3b82f6, #06b6d4); }
+    .fin-card.c-expenses    { --card-accent: linear-gradient(90deg, #f59e0b, #ef4444); }
+    .fin-card.c-profit      { --card-accent: linear-gradient(90deg, #10b981, #3b82f6); }
+    .fin-card.c-cash        { --card-accent: linear-gradient(90deg, #06b6d4, #3b82f6); }
+    .fin-card.c-receivables { --card-accent: linear-gradient(90deg, #a855f7, #6366f1); }
+    .fin-card.c-payables    { --card-accent: linear-gradient(90deg, #f97316, #ef4444); }
+
+    .fin-card-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+    .fin-card-label { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.04em; }
+    .fin-card-icon {
+      width: 32px; height: 32px; border-radius: 8px;
+      background: rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: center;
+      font-size: 16px;
+    }
+    .fin-card-value {
+      font-size: 1.85rem; font-weight: 800; letter-spacing: -0.02em; color: #fff;
+      font-family: var(--font); margin-bottom: 6px;
+    }
+    .fin-card-sub { font-size: 0.78rem; color: var(--text-muted); display: flex; align-items: center; gap: 6px; font-weight: 500; }
+    .fin-card-sub .badge-trend {
+      padding: 1px 6px; border-radius: 4px; font-weight: 700; font-size: 0.72rem;
+    }
+    .badge-trend.up { background: rgba(16,185,129,0.18); color: var(--green); }
+    .badge-trend.neutral { background: rgba(255,255,255,0.08); color: var(--text-muted); }
+
+    /* ── Split Section: Connected Devices & Sync History ── */
+    .split-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
+      margin-bottom: 28px;
+    }
+    @media (max-width: 960px) {
+      .split-grid { grid-template-columns: 1fr; }
+    }
+
+    /* ── Device List ── */
+    .device-list { display: flex; flex-direction: column; gap: 10px; }
+    .device-item {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 14px 16px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .device-item-left { display: flex; align-items: center; gap: 12px; }
+    .device-icon {
+      width: 40px; height: 40px; border-radius: 10px;
+      background: rgba(59,130,246,0.12); color: var(--blue);
+      display: flex; align-items: center; justify-content: center; font-size: 20px;
+    }
+    .device-info h5 { font-size: 0.9rem; font-weight: 600; color: #fff; margin-bottom: 2px; }
+    .device-info p { font-size: 0.75rem; color: var(--text-muted); }
+    .device-item-right { text-align: right; }
+
+    /* ── Sync History Timeline ── */
+    .history-list { display: flex; flex-direction: column; gap: 10px; max-height: 380px; overflow-y: auto; }
+    .history-list::-webkit-scrollbar { width: 5px; }
+    .history-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .history-item {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 14px 16px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .history-item-left { display: flex; flex-direction: column; gap: 2px; }
+    .history-date { font-size: 0.88rem; font-weight: 600; color: #fff; }
+    .history-meta { font-size: 0.75rem; color: var(--text-muted); }
+    .history-item-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+    .history-records { font-family: var(--mono); font-size: 0.82rem; font-weight: 700; color: #cbd5e1; }
+
+    /* ── Collapsible API Playground ── */
+    .pg-toggle-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      cursor: pointer; user-select: none;
+    }
+
+    /* ── Toast notifications ── */
+    #toast-container { position: fixed; bottom: 28px; right: 28px; display: flex; flex-direction: column; gap: 10px; z-index: 999; }
+    .toast {
+      padding: 12px 20px; border-radius: var(--radius-sm);
+      font-size: 0.84rem; font-weight: 500;
+      background: var(--surface2); border: 1px solid var(--border-2);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      animation: slideIn 0.25s ease; max-width: 360px;
+    }
+    .toast.success { border-color: rgba(16,185,129,0.5); color: var(--green); }
+    .toast.error   { border-color: rgba(239,68,68,0.5);  color: var(--red); }
+    .toast.info    { border-color: rgba(59,130,246,0.5); color: #93c5fd; }
+    @keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+    footer { text-align: center; padding: 24px; font-size: 0.76rem; color: var(--text-muted); border-top: 1px solid var(--border); }
+  </style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- ── Header ── -->
+  <header>
+    <a href="/dashboard" class="brand">
+      <div class="brand-mark">F</div>
+      <span>FinLayer <span style="color:var(--text-muted);font-weight:400">/ SaaS Dashboard</span></span>
+    </a>
+    <nav>
+      <a href="/dashboard" class="active">Dashboard</a>
+      <a href="#financial-overview">Financial Overview</a>
+      <a href="/dashboard/trial-balance">Trial Balance</a>
+      <a href="/dashboard/ledgers">Ledgers</a>
+      <a href="/dashboard/vouchers">Transactions</a>
+      <a href="/dashboard/sync-history">Sync History</a>
+      <a href="/setup">Settings</a>
+    </nav>
+    <div class="header-actions">
+      <button class="refresh-btn" id="refresh-btn" onclick="loadData()">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14">
+          <path d="M14 8A6 6 0 1 1 8 2M14 2v4h-4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Refresh
+      </button>
+    </div>
+  </header>
+
+  <!-- ── Main ── -->
+  <main>
+    <!-- Top Controls -->
+    <div class="top-controls">
+      <div class="company-switcher">
+        <label for="company-select">Company:</label>
+        <select id="company-select" onchange="onCompanyChange()">
+          <option value="">Loading companies…</option>
+        </select>
+      </div>
+      <div style="font-size:0.78rem;color:var(--text-muted);" id="last-refresh-label">Never refreshed</div>
+    </div>
+
+    <!-- ── 1. Hero: Company Overview & Sync Control ── -->
+    <div class="hero-grid">
+
+      <!-- Company Overview Card -->
+      <div class="card" id="company-overview-card">
+        <div class="card-title">
+          <span>Company Overview</span>
+          <span class="company-id-badge" id="overview-company-id">ID: —</span>
+        </div>
+        <div class="company-overview-header">
+          <div class="company-display-name" id="overview-company-name">Loading…</div>
+          <div style="font-size:0.82rem;color:var(--text-muted);">
+            Tally Company: <strong id="overview-tally-name" style="color:#fff;">—</strong>
+          </div>
+        </div>
+
+        <!-- 3 Connectivity Badges -->
+        <div class="connectivity-grid">
+          <!-- Tally Status -->
+          <div class="conn-pill">
+            <span class="pill-label">Tally Status</span>
+            <div class="pill-status" id="tally-status-indicator">
+              <span class="status-dot green pulse"></span>
+              <span>Connected</span>
+            </div>
+          </div>
+          <!-- Google Sheet -->
+          <div class="conn-pill">
+            <span class="pill-label">Google Sheet</span>
+            <div class="pill-status" id="google-status-indicator">
+              <span class="status-dot green"></span>
+              <span>Connected</span>
+            </div>
+            <a href="#" target="_blank" id="google-sheet-url" class="sheet-link-btn" style="display:none;">
+              Open Sheet ↗
+            </a>
+          </div>
+          <!-- Connector Status -->
+          <div class="conn-pill">
+            <span class="pill-label">Connector</span>
+            <div class="pill-status" id="connector-status-indicator">
+              <span class="status-dot green pulse"></span>
+              <span>Online</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Meta footer -->
+        <div style="display:flex;gap:20px;font-size:0.78rem;color:var(--text-muted);border-top:1px solid var(--border);padding-top:12px;">
+          <div>Device: <strong id="overview-device-name" style="color:#e2e8f0;">—</strong></div>
+          <div>OS: <strong id="overview-os-name" style="color:#e2e8f0;">—</strong></div>
+          <div>Heartbeat: <strong id="overview-heartbeat" style="color:#e2e8f0;">—</strong></div>
+        </div>
+      </div>
+
+      <!-- Sync Controls Card -->
+      <div class="card" id="sync-controls-card">
+        <div class="card-title">
+          <span>Financial Data Pipeline</span>
+          <span id="sync-pipeline-tag" style="font-size:0.72rem;color:var(--text-muted);">Auto-Export</span>
+        </div>
+        <div class="sync-card-body">
+          <button class="btn-sync-hero" id="btn-sync-financial" onclick="triggerSync('FINANCIAL_DATA')">
+            ⚡ Sync Financial Data
+          </button>
+
+          <div class="sync-telemetry">
+            <div class="tele-row">
+              <span class="label">Current Status</span>
+              <span class="value" id="sync-job-status"><span class="job-badge none">Idle</span></span>
+            </div>
+            <div class="tele-row">
+              <span class="label">Last Sync</span>
+              <span class="value" id="sync-last-time">—</span>
+            </div>
+            <div class="tele-row">
+              <span class="label">Records Updated</span>
+              <span class="value" id="sync-records-updated">—</span>
+            </div>
+            <div class="tele-row" id="sync-google-row" style="display:none;">
+              <span class="label">Google Sheet Tab Export</span>
+              <span class="value" id="sync-google-status">—</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ── 2. Financial Summary Cards (6 Key Metrics) ── -->
+    <div id="financial-overview" style="margin-bottom:8px;">
+      <div class="section-title">
+        <span>Financial Summary</span>
+        <span style="font-size:0.75rem;font-weight:600;color:var(--text-muted);background:var(--surface2);padding:3px 10px;border-radius:100px;border:1px solid var(--border);">
+          Live Tally Data
+        </span>
+      </div>
+      <div class="summary-grid">
+
+        <!-- Revenue -->
+        <div class="fin-card c-revenue">
+          <div class="fin-card-top">
+            <span class="fin-card-label">Revenue</span>
+            <div class="fin-card-icon">📈</div>
+          </div>
+          <div class="fin-card-value" id="card-revenue">₹0</div>
+          <div class="fin-card-sub">
+            <span class="badge-trend up">↑ 12%</span>
+            <span>Operating & sales revenue</span>
+          </div>
+        </div>
+
+        <!-- Expenses -->
+        <div class="fin-card c-expenses">
+          <div class="fin-card-top">
+            <span class="fin-card-label">Expenses</span>
+            <div class="fin-card-icon">💳</div>
+          </div>
+          <div class="fin-card-value" id="card-expenses">₹0</div>
+          <div class="fin-card-sub">
+            <span class="badge-trend neutral">Normal</span>
+            <span>Purchases & direct expenses</span>
+          </div>
+        </div>
+
+        <!-- Profit -->
+        <div class="fin-card c-profit">
+          <div class="fin-card-top">
+            <span class="fin-card-label">Profit</span>
+            <div class="fin-card-icon">💰</div>
+          </div>
+          <div class="fin-card-value" id="card-profit">₹0</div>
+          <div class="fin-card-sub">
+            <span class="badge-trend up" id="profit-margin-badge">Net Positive</span>
+            <span>Net Operating Margin</span>
+          </div>
+        </div>
+
+        <!-- Cash Balance -->
+        <div class="fin-card c-cash">
+          <div class="fin-card-top">
+            <span class="fin-card-label">Cash Balance</span>
+            <div class="fin-card-icon">🏦</div>
+          </div>
+          <div class="fin-card-value" id="card-cash">₹0</div>
+          <div class="fin-card-sub">
+            <span>Bank accounts & cash in hand</span>
+          </div>
+        </div>
+
+        <!-- Receivables -->
+        <div class="fin-card c-receivables">
+          <div class="fin-card-top">
+            <span class="fin-card-label">Receivables</span>
+            <div class="fin-card-icon">📥</div>
+          </div>
+          <div class="fin-card-value" id="card-receivables">₹0</div>
+          <div class="fin-card-sub">
+            <span>Sundry debtors / customer balance</span>
+          </div>
+        </div>
+
+        <!-- Payables -->
+        <div class="fin-card c-payables">
+          <div class="fin-card-top">
+            <span class="fin-card-label">Payables</span>
+            <div class="fin-card-icon">📤</div>
+          </div>
+          <div class="fin-card-value" id="card-payables">₹0</div>
+          <div class="fin-card-sub">
+            <span>Sundry creditors / vendor balance</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ── 3. Split Grid: Connected Devices & Sync History ── -->
+    <div class="split-grid">
+
+      <!-- Connected Devices -->
+      <div class="card" id="connected-devices-card">
+        <div class="card-title">
+          <span>Connected Devices</span>
+          <span style="font-size:0.75rem;color:var(--text-muted);">Tally Agents</span>
+        </div>
+        <div class="device-list" id="device-list">
+          <div style="color:var(--text-muted);font-size:0.85rem;padding:12px;">Loading devices…</div>
+        </div>
+      </div>
+
+      <!-- Sync History Section -->
+      <div class="card" id="sync-history-section">
+        <div class="card-title">
+          <span>Sync History</span>
+          <a href="/dashboard/sync-history" style="font-size:0.78rem;color:var(--blue);text-decoration:none;font-weight:600;">
+            View All ↗
+          </a>
+        </div>
+        <div class="history-list" id="history-list">
+          <div style="color:var(--text-muted);font-size:0.85rem;padding:12px;">Loading history…</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ── 4. API Playground (Preserved for testing) ── -->
+    <div class="card" style="margin-top:10px;">
+      <div class="pg-toggle-bar" onclick="togglePgSection()">
+        <div class="card-title" style="margin-bottom:0;">Developer API Playground</div>
+        <span id="pg-chevron" style="color:var(--text-muted);">▾</span>
+      </div>
+      <div id="pg-content" style="display:none;margin-top:16px;">
+        <div style="margin-bottom:14px;display:flex;gap:10px;">
+          <input id="global-api-key" placeholder="Bearer API Key" style="background:var(--surface2);border:1px solid var(--border);color:#fff;padding:8px 12px;border-radius:6px;width:320px;font-family:var(--mono);font-size:0.8rem;" />
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <a href="/v1/companies" target="_blank" style="padding:6px 12px;border-radius:6px;background:var(--surface2);color:var(--blue);font-size:0.78rem;text-decoration:none;font-family:var(--mono);">GET /v1/companies</a>
+          <a href="/dashboard/data" target="_blank" style="padding:6px 12px;border-radius:6px;background:var(--surface2);color:var(--blue);font-size:0.78rem;text-decoration:none;font-family:var(--mono);">GET /dashboard/data</a>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <footer>
+    FinLayer Platform &copy; 2026 — Enterprise TallyPrime Sync & Financial Intelligence
+  </footer>
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+const API = '';
+let companies = [];
+let selectedCompanyId = null;
+let recentJobs = [];
+
+function toast(msg, type = 'info') {
+  const c = document.getElementById('toast-container');
+  const t = document.createElement('div');
+  t.className = `toast ${type}`;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 250); }, 3500);
+}
+
+function timeAgo(iso) {
+  if (!iso) return '—';
+  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (diff < 60) return `${diff}s ago`;
+  const m = Math.floor(diff / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function formatCurrency(val) {
+  const num = Number(val) || 0;
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0,
+  }).format(num);
+}
+
+function badgeHtml(status) {
+  const s = status || 'IDLE';
+  return `<span class="job-badge ${s}">${s}</span>`;
+}
+
+/* ─── Data Loading ─── */
+async function loadData() {
+  const btn = document.getElementById('refresh-btn');
+  btn.disabled = true;
+  btn.textContent = 'Refreshing…';
+
+  try {
+    const res = await fetch(`${API}/dashboard/data`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    companies = data.companies || [];
+    recentJobs = data.recentJobs || [];
+
+    renderCompanySelect();
+    document.getElementById('last-refresh-label').textContent = `Refreshed ${new Date().toLocaleTimeString()}`;
+  } catch (e) {
+    toast(`Failed to load dashboard: ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14"><path d="M14 8A6 6 0 1 1 8 2M14 2v4h-4" stroke-linecap="round" stroke-linejoin="round"/></svg> Refresh`;
+  }
+}
+
+function renderCompanySelect() {
+  const sel = document.getElementById('company-select');
+  const prev = selectedCompanyId;
+  sel.innerHTML = '';
+
+  if (companies.length === 0) {
+    sel.innerHTML = '<option value="">No companies found</option>';
+    selectedCompanyId = null;
+    return;
+  }
+
+  companies.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c.id;
+    opt.textContent = `${c.name} (${c.tallyCompanyName})`;
+    sel.appendChild(opt);
+  });
+
+  if (prev && companies.find(c => c.id === prev)) {
+    sel.value = prev;
+    selectedCompanyId = prev;
+  } else {
+    selectedCompanyId = companies[0].id;
+    sel.value = selectedCompanyId;
+  }
+
+  onCompanyChange();
+}
+
+function onCompanyChange() {
+  const sel = document.getElementById('company-select');
+  selectedCompanyId = sel.value || null;
+  const company = companies.find(c => c.id === selectedCompanyId);
+
+  updateCompanyOverview(company);
+  updateSyncPanel(company);
+  renderConnectedDevices(company);
+
+  if (selectedCompanyId) {
+    loadFinancialSummary(selectedCompanyId);
+    loadSyncHistory(selectedCompanyId);
+  }
+}
+
+/* ─── Company Overview Card ─── */
+function updateCompanyOverview(company) {
+  const nameEl = document.getElementById('overview-company-name');
+  const idEl = document.getElementById('overview-company-id');
+  const tallyNameEl = document.getElementById('overview-tally-name');
+  const tallyInd = document.getElementById('tally-status-indicator');
+  const googleInd = document.getElementById('google-status-indicator');
+  const googleLink = document.getElementById('google-sheet-url');
+  const connInd = document.getElementById('connector-status-indicator');
+
+  const devEl = document.getElementById('overview-device-name');
+  const osEl = document.getElementById('overview-os-name');
+  const hbEl = document.getElementById('overview-heartbeat');
+
+  if (!company) {
+    nameEl.textContent = 'No company selected';
+    idEl.textContent = 'ID: —';
+    tallyNameEl.textContent = '—';
+    tallyInd.innerHTML = '<span class="status-dot gray"></span><span>Not Connected</span>';
+    googleInd.innerHTML = '<span class="status-dot gray"></span><span>Not Connected</span>';
+    connInd.innerHTML = '<span class="status-dot gray"></span><span>Offline</span>';
+    devEl.textContent = '—';
+    osEl.textContent = '—';
+    hbEl.textContent = '—';
+    googleLink.style.display = 'none';
+    return;
+  }
+
+  nameEl.textContent = company.name;
+  idEl.textContent = `ID: ${company.id.slice(0, 10)}…`;
+  tallyNameEl.textContent = company.tallyCompanyName || '—';
+
+  // Tally status
+  tallyInd.innerHTML = '<span class="status-dot green pulse"></span><span>Connected</span>';
+
+  // Google status
+  if (company.googleConnection && company.googleConnection.spreadsheetId) {
+    googleInd.innerHTML = '<span class="status-dot green"></span><span>Connected</span>';
+    if (company.googleConnection.spreadsheetUrl) {
+      googleLink.href = company.googleConnection.spreadsheetUrl;
+      googleLink.style.display = 'inline-flex';
+    } else {
+      googleLink.style.display = 'none';
+    }
+  } else {
+    googleInd.innerHTML = '<span class="status-dot gray"></span><span>Not Connected</span>';
+    googleLink.style.display = 'none';
+  }
+
+  // Connector status
+  const conn = company.connector;
+  const isOnline = conn && conn.status === 'ONLINE';
+  connInd.innerHTML = `<span class="status-dot ${isOnline ? 'green pulse' : 'red'}"></span><span>${isOnline ? 'Online' : 'Offline'}</span>`;
+
+  devEl.textContent = conn ? conn.name : '—';
+  osEl.textContent = conn ? (conn.operatingSystem || 'Windows / PC') : '—';
+  hbEl.textContent = conn ? timeAgo(conn.lastHeartbeat) : '—';
+}
+
+/* ─── Sync Status Panel ─── */
+function updateSyncPanel(company) {
+  const js = document.getElementById('sync-job-status');
+  const ls = document.getElementById('sync-last-time');
+  const ru = document.getElementById('sync-records-updated');
+  const googleRow = document.getElementById('sync-google-row');
+  const googleStatus = document.getElementById('sync-google-status');
+
+  if (!company) {
+    js.innerHTML = badgeHtml('none');
+    ls.textContent = '—';
+    ru.textContent = '—';
+    googleRow.style.display = 'none';
+    return;
+  }
+
+  if (company.syncHistory) {
+    js.innerHTML = badgeHtml(company.syncHistory.status || 'COMPLETED');
+    const compDate = company.syncHistory.completedAt || company.syncHistory.startedAt;
+    ls.textContent = compDate ? new Date(compDate).toLocaleString('en-IN') : '—';
+    ru.textContent = `${Number(company.syncHistory.recordsUpdated || 0).toLocaleString('en-IN')} records`;
+
+    if (company.syncHistory.googleStatus && company.syncHistory.googleStatus !== 'SKIPPED') {
+      googleRow.style.display = 'flex';
+      const isSuccess = company.syncHistory.googleStatus === 'SUCCESS';
+      googleStatus.innerHTML = `<span class="job-badge ${isSuccess ? 'COMPLETED' : 'FAILED'}">${company.syncHistory.googleStatus}</span>`;
+    } else {
+      googleRow.style.display = 'none';
+    }
+  } else if (company.lastSync) {
+    js.innerHTML = badgeHtml('COMPLETED');
+    ls.textContent = company.lastSync.at ? new Date(company.lastSync.at).toLocaleString('en-IN') : '—';
+    const totalRec = (company.lastSync.created ?? 0) + (company.lastSync.updated ?? 0);
+    ru.textContent = `${totalRec.toLocaleString('en-IN')} records`;
+    googleRow.style.display = 'none';
+  } else {
+    js.innerHTML = badgeHtml('IDLE');
+    ls.textContent = 'Never synced';
+    ru.textContent = `${(company.totalRecords || 0).toLocaleString('en-IN')} records`;
+    googleRow.style.display = 'none';
+  }
+}
+
+/* ─── Financial Summary Cards ─── */
+async function loadFinancialSummary(companyId) {
+  try {
+    const res = await fetch(`${API}/dashboard/financial-summary/${companyId}`);
+    if (!res.ok) return;
+    const summary = await res.json();
+
+    document.getElementById('card-revenue').textContent = formatCurrency(summary.revenue);
+    document.getElementById('card-expenses').textContent = formatCurrency(summary.expenses);
+    document.getElementById('card-profit').textContent = formatCurrency(summary.profit);
+    document.getElementById('card-cash').textContent = formatCurrency(summary.cashBalance);
+    document.getElementById('card-receivables').textContent = formatCurrency(summary.receivables);
+    document.getElementById('card-payables').textContent = formatCurrency(summary.payables);
+
+    const marginBadge = document.getElementById('profit-margin-badge');
+    if (summary.revenue > 0) {
+      const margin = Math.round((summary.profit / summary.revenue) * 100);
+      marginBadge.textContent = `${margin}% Net Margin`;
+    } else {
+      marginBadge.textContent = summary.profit >= 0 ? 'Balanced' : 'Deficit';
+    }
+  } catch (e) {
+    console.warn('Failed to load financial summary', e);
+  }
+}
+
+/* ─── Connected Devices List ─── */
+function renderConnectedDevices(company) {
+  const listEl = document.getElementById('device-list');
+  const devices = company?.connectors || (company?.connector ? [company.connector] : []);
+
+  if (!devices || devices.length === 0) {
+    listEl.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;padding:12px;">No connected devices found for this company.</div>';
+    return;
+  }
+
+  listEl.innerHTML = devices.map(d => {
+    const isOnline = d.status === 'ONLINE';
+    return `
+      <div class="device-item">
+        <div class="device-item-left">
+          <div class="device-icon">💻</div>
+          <div class="device-info">
+            <h5>${d.name || 'Connector Agent'}</h5>
+            <p>OS: ${d.operatingSystem || 'Windows / PC'} &bull; Device ID: <code>${d.deviceId ? d.deviceId.slice(0,12) + '…' : '—'}</code></p>
+          </div>
+        </div>
+        <div class="device-item-right">
+          <div style="margin-bottom:4px;">
+            <span class="status-dot ${isOnline ? 'green pulse' : 'red'}" style="display:inline-block;"></span>
+            <span style="font-size:0.75rem;font-weight:700;color:${isOnline ? 'var(--green)' : 'var(--red)'};">${d.status}</span>
+          </div>
+          <div style="font-size:0.72rem;color:var(--text-muted);">${timeAgo(d.lastHeartbeat)}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+/* ─── Sync History List ─── */
+async function loadSyncHistory(companyId) {
+  const listEl = document.getElementById('history-list');
+  try {
+    const res = await fetch(`${API}/dashboard/sync-history/${companyId}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const history = data.history || [];
+
+    if (history.length === 0) {
+      listEl.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;padding:12px;">No sync history recorded yet.</div>';
+      return;
+    }
+
+    listEl.innerHTML = history.slice(0, 8).map(h => `
+      <div class="history-item">
+        <div class="history-item-left">
+          <div class="history-date">${h.formattedDate}, ${h.formattedTime}</div>
+          <div class="history-meta">Type: <strong>${h.syncType}</strong></div>
+        </div>
+        <div class="history-item-right">
+          ${badgeHtml(h.status)}
+          <div class="history-records">${Number(h.recordsUpdated || 0).toLocaleString('en-IN')} records</div>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div style="color:var(--red);font-size:0.85rem;padding:12px;">Failed to load sync history.</div>';
+  }
+}
+
+/* ─── Trigger Sync ─── */
+async function triggerSync(type = 'FINANCIAL_DATA') {
+  if (!selectedCompanyId) {
+    toast('Select a company first.', 'error');
+    return;
+  }
+  const btn = document.getElementById('btn-sync-financial');
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await fetch(`${API}/dashboard/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ companyId: selectedCompanyId, type }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+    toast(`✓ ${type} sync job queued`, 'success');
+    document.getElementById('sync-job-status').innerHTML = badgeHtml('PENDING');
+
+    pollJobStatus(data.jobId);
+  } catch (e) {
+    toast(`Sync trigger failed: ${e.message}`, 'error');
+  } finally {
+    setTimeout(() => { if (btn) btn.disabled = false; }, 1500);
+  }
+}
+
+async function pollJobStatus(jobId, attempts = 0) {
+  if (attempts > 60) return;
+  await new Promise(r => setTimeout(r, 4000));
+  try {
+    const res = await fetch(`${API}/dashboard/data`);
+    if (!res.ok) return;
+    const data = await res.json();
+    companies = data.companies || [];
+    recentJobs = data.recentJobs || [];
+
+    const company = companies.find(c => c.id === selectedCompanyId);
+    updateCompanyOverview(company);
+    updateSyncPanel(company);
+
+    const job = recentJobs.find(j => j.id === jobId);
+    if (job && job.status === 'COMPLETED') {
+      toast(`✓ Financial data sync completed successfully`, 'success');
+      loadFinancialSummary(selectedCompanyId);
+      loadSyncHistory(selectedCompanyId);
+      return;
+    }
+    if (!job || job.status === 'PENDING') {
+      pollJobStatus(jobId, attempts + 1);
+    }
+  } catch {}
+}
+
+function togglePgSection() {
+  const content = document.getElementById('pg-content');
+  const chevron = document.getElementById('pg-chevron');
+  const open = content.style.display === 'none';
+  content.style.display = open ? 'block' : 'none';
+  chevron.textContent = open ? '▴' : '▾';
+}
+
+document.addEventListener('DOMContentLoaded', loadData);
+</script>
+</body>
+</html>
