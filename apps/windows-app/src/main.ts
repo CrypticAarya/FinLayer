@@ -6,7 +6,13 @@ import os from "node:os";
 import crypto from "node:crypto";
 
 // Reuse existing connector services and types
-import { fetchCompaniesFromTally, type TallyCompany } from "../../connector/src/tally/company-service.js";
+import {
+  fetchActiveCompany,
+  fetchCompaniesFromTally,
+  getCurrentCompanyRequest,
+  getSimpleListOfCompaniesRequest,
+  type TallyCompany,
+} from "../../connector/src/tally/company-service.js";
 import {
   registerConnectorWithApi,
   selectCompanyForConnector,
@@ -287,7 +293,7 @@ ipcMain.handle("finlayer:detect-tally", async () => {
     const res = await fetch(TALLY_URL, {
       method: "POST",
       headers: { "Content-Type": "text/xml" },
-      body: `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE><ID>Company</ID></HEADER><BODY><DESC></DESC></BODY></ENVELOPE>`,
+      body: getSimpleListOfCompaniesRequest(),
       signal: controller.signal,
     }).catch(() => null);
 
@@ -304,6 +310,61 @@ ipcMain.handle("finlayer:detect-tally", async () => {
       connected: false,
       url: TALLY_URL,
       statusText: "Not Connected",
+    };
+  }
+});
+
+// 2b. Automatically detect active company and auto-map
+ipcMain.handle("finlayer:fetch-active-company", async () => {
+  try {
+    const active = await fetchActiveCompany(TALLY_URL);
+    if (!active || !active.name) {
+      return {
+        success: false,
+        noCompanyOpen: true,
+      };
+    }
+
+    const companyName = active.name;
+    const state = await loadLocalState();
+    configureConnector(state);
+
+    // Ensure registered with API
+    if (!state.connectorId) {
+      const reg = await registerConnectorWithApi({
+        deviceId: state.deviceId,
+        deviceName: state.deviceName || "Windows-PC",
+        operatingSystem: "Windows 11 / 10",
+      });
+      state.connectorId = reg.connectorId;
+      state.setupStatus = "REGISTERED";
+      await saveLocalState(state);
+    }
+
+    // Report discovery to API
+    await reportTallyConnected(state.connectorId).catch(() => {});
+    await reportTallyCompanies(state.connectorId, [{ name: companyName }]).catch(() => {});
+
+    // Automatically map company
+    const selection = await selectCompanyForConnector(state.connectorId, companyName);
+    state.companyId = selection.companyId;
+    state.tallyCompanyName = companyName;
+    state.setupStatus = "WAITING_FOR_GOOGLE";
+    await saveLocalState(state);
+
+    configureConnector(state);
+
+    return {
+      success: true,
+      companyName,
+      companyId: state.companyId,
+      connectorId: state.connectorId,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      error: msg,
     };
   }
 });

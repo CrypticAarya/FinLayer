@@ -24,8 +24,15 @@
   const btnRecheckTally = document.getElementById("btn-recheck-tally");
   const btnContinueTally = document.getElementById("btn-continue-tally");
 
-  const companyDropdown = document.getElementById("company-dropdown");
-  const btnConfirmCompany = document.getElementById("btn-confirm-company");
+  // Step 3 Elements
+  const companyCardTitle = document.getElementById("company-card-title");
+  const companyCardSubtitle = document.getElementById("company-card-subtitle");
+  const companyFoundView = document.getElementById("company-found-view");
+  const detectedCompanyName = document.getElementById("detected-company-name");
+  const btnContinueCompany = document.getElementById("btn-continue-company");
+  const noCompanyView = document.getElementById("no-company-view");
+  const btnRetryCompany = document.getElementById("btn-retry-company");
+  const companyLoadingView = document.getElementById("company-loading-view");
 
   const googleStatusBadge = document.getElementById("google-status-badge");
   const googleStatusText = document.getElementById("google-status-text");
@@ -98,6 +105,12 @@
         tallyStatusBadge.innerHTML = `<span class="status-dot green"></span><span>Connected</span>`;
         btnContinueTally.disabled = false;
         setFooter("TallyPrime detected online");
+        setTimeout(() => {
+          if (currentStep === 2) {
+            goToStep(3);
+            loadActiveCompany();
+          }
+        }, 600);
       } else {
         tallyStatusBadge.className = "status-badge not-connected";
         tallyStatusBadge.innerHTML = `<span class="status-dot red"></span><span>Not Connected (Is Tally running on port 9000?)</span>`;
@@ -118,69 +131,51 @@
 
   btnContinueTally.addEventListener("click", () => {
     goToStep(3);
-    loadTallyCompanies();
+    loadActiveCompany();
   });
 
-  // ── Step 3: Company Selection ──────────────────────────────────────────────
-  async function loadTallyCompanies() {
-    companyDropdown.innerHTML = `<option value="">Fetching companies from TallyPrime…</option>`;
-    btnConfirmCompany.disabled = true;
-    setFooter("Querying Tally companies…");
+  // ── Step 3: Auto Detect Active Company ────────────────────────────────────
+  async function loadActiveCompany() {
+    companyLoadingView.style.display = "block";
+    companyFoundView.style.display = "none";
+    noCompanyView.style.display = "none";
+    companyCardTitle.textContent = "Tally Connected ✅";
+    companyCardSubtitle.textContent = "Detecting open company in TallyPrime…";
+    setFooter("Detecting active company in TallyPrime…");
 
     try {
-      const res = await window.finlayer.fetchTallyCompanies();
-      if (res.success && res.companies && res.companies.length > 0) {
-        companyDropdown.innerHTML = `<option value="">-- Choose a company --</option>`;
-        res.companies.forEach((comp) => {
-          const opt = document.createElement("option");
-          opt.value = comp.name;
-          opt.textContent = comp.name;
-          companyDropdown.appendChild(opt);
-        });
+      const res = await window.finlayer.fetchActiveCompany();
+      companyLoadingView.style.display = "none";
 
-        // Auto-select first company
-        companyDropdown.selectedIndex = 1;
-        btnConfirmCompany.disabled = false;
-        setFooter(`${res.companies.length} company(ies) found`);
+      if (res.success && res.companyName) {
+        currentCompanyId = res.companyId;
+        detectedCompanyName.textContent = res.companyName;
+        companyCardTitle.textContent = "Tally Connected ✅";
+        companyCardSubtitle.textContent = "Active company detected automatically.";
+        companyFoundView.style.display = "block";
+        noCompanyView.style.display = "none";
+        setFooter(`Company found: ${res.companyName}`);
       } else {
-        companyDropdown.innerHTML = `<option value="">No companies open in TallyPrime</option>`;
-        setFooter("No open companies found in Tally");
+        companyFoundView.style.display = "none";
+        noCompanyView.style.display = "block";
+        companyCardSubtitle.textContent = "Please open a company in TallyPrime and click Retry.";
+        setFooter("Tally connected, but no company is open");
       }
     } catch (err) {
-      companyDropdown.innerHTML = `<option value="">Error fetching companies</option>`;
-      setFooter("Company fetch error");
+      companyLoadingView.style.display = "none";
+      companyFoundView.style.display = "none";
+      noCompanyView.style.display = "block";
+      setFooter("Error detecting company");
     }
   }
 
-  companyDropdown.addEventListener("change", () => {
-    btnConfirmCompany.disabled = !companyDropdown.value;
+  btnRetryCompany.addEventListener("click", () => {
+    loadActiveCompany();
   });
 
-  btnConfirmCompany.addEventListener("click", async () => {
-    const selected = companyDropdown.value;
-    if (!selected) return;
-
-    btnConfirmCompany.disabled = true;
-    btnConfirmCompany.textContent = "Connecting to FinLayer API…";
-    setFooter(`Mapping company "${selected}"…`);
-
-    try {
-      const res = await window.finlayer.selectCompany(selected);
-      if (res.success && res.companyId) {
-        currentCompanyId = res.companyId;
-        setFooter(`Company mapped: ID ${res.companyId}`);
-        goToStep(4);
-        initGoogleStep(res.companyId);
-      } else {
-        alert("Failed to map company: " + (res.error || "Unknown error"));
-        btnConfirmCompany.disabled = false;
-        btnConfirmCompany.textContent = "Confirm Company →";
-      }
-    } catch (err) {
-      alert("Error: " + (err.message || err));
-      btnConfirmCompany.disabled = false;
-      btnConfirmCompany.textContent = "Confirm Company →";
-    }
+  btnContinueCompany.addEventListener("click", () => {
+    goToStep(4);
+    initGoogleStep(currentCompanyId);
   });
 
   // ── Step 4: Google Sheet Connection ────────────────────────────────────────

@@ -80,24 +80,42 @@
       </div>
     </div>
 
-    <!-- STEP 3: Company Selection -->
+    <!-- STEP 3: Company Auto-Detection -->
     <div class="step-card" id="card-step-3">
-      <div class="card-icon">🏢</div>
-      <h2>Select Company</h2>
-      <p class="subtitle">
-        Select which Tally company you want to sync with FinLayer.
+      <div class="card-icon" id="company-card-icon">🏢</div>
+      <h2 id="company-card-title">Tally Connected ✅</h2>
+      <p class="subtitle" id="company-card-subtitle">
+        Detecting open company in TallyPrime…
       </p>
 
-      <div class="form-group">
-        <label class="form-label" for="company-dropdown">Available Tally Companies</label>
-        <select class="app-select" id="company-dropdown">
-          <option value="">Loading companies from Tally…</option>
-        </select>
+      <!-- Company Found State -->
+      <div id="company-found-view" style="display:none;">
+        <div class="status-box" style="flex-direction:column;align-items:flex-start;gap:8px;margin-bottom:24px;">
+          <span class="status-box-label">Company Found</span>
+          <div class="company-name-text" id="detected-company-name">Loading…</div>
+        </div>
+        <button class="btn-primary" id="btn-continue-company">
+          Continue &rarr;
+        </button>
       </div>
 
-      <button class="btn-primary" id="btn-confirm-company" disabled>
-        Confirm Company &rarr;
-      </button>
+      <!-- No Company Found State -->
+      <div id="no-company-view" style="display:none;">
+        <div class="status-box not-connected-box" style="flex-direction:column;align-items:flex-start;gap:8px;margin-bottom:24px;">
+          <span class="status-box-label" style="color:var(--text);font-size:0.95rem;font-weight:700;">Tally is connected.</span>
+          <p style="font-size:0.85rem;color:var(--muted);margin:0;line-height:1.4;">
+            Please open a company in TallyPrime and click Retry.
+          </p>
+        </div>
+        <button class="btn-primary" id="btn-retry-company">
+          ↻ Retry Detection
+        </button>
+      </div>
+
+      <!-- Loading State -->
+      <div id="company-loading-view" style="text-align:center;padding:24px 0;">
+        <p style="color:var(--muted);font-size:0.9rem;">Connecting to TallyPrime XML server…</p>
+      </div>
     </div>
 
     <!-- STEP 4: Google Sheet Connection -->

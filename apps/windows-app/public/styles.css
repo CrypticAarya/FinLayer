@@ -205,6 +205,18 @@ p.subtitle {
   box-shadow: 0 0 10px var(--red);
 }
 
+.company-name-text {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #60a5fa;
+  letter-spacing: 0.02em;
+  word-break: break-word;
+}
+.not-connected-box {
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.08);
+}
+
 /* ── Form Controls ── */
 .form-group {
   display: flex;
