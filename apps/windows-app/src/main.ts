@@ -149,6 +149,16 @@ function resolveUpdateUrl(): string {
   return DEFAULT_UPDATE_URL;
 }
 
+function isDemoMode(): boolean {
+  if (process.env.DEMO_MODE === "true" || process.env.DEMO_MODE === "1") {
+    return true;
+  }
+  if (process.env.DEMO_MODE === "false" || process.env.DEMO_MODE === "0") {
+    return false;
+  }
+  return true; // Default to demo mode for seamless founder demo
+}
+
 function resolveInitialTallyUrl(): string {
   // 1. Command-line argument: --tally-url=... or --tally-url ...
   for (let i = 0; i < process.argv.length; i++) {
@@ -596,6 +606,7 @@ ipcMain.handle("finlayer:get-initial-state", async () => {
   return {
     success: true,
     state,
+    demoMode: isDemoMode(),
     tallyUrl: activeTallyUrl,
     appVersion: app.getVersion(),
     connectorVersion: CONNECTOR_VERSION,
@@ -816,7 +827,7 @@ ipcMain.handle("finlayer:select-company", async (_event, companyName: string) =>
   }
 });
 
-// 5. Start Google OAuth Flow
+// 5. Start Google OAuth Flow (or Direct Demo Sheet Connection)
 ipcMain.handle("finlayer:start-google-auth", async (_event, companyId: string) => {
   console.log("[MAIN] start-google-auth called", companyId);
 
@@ -849,12 +860,36 @@ ipcMain.handle("finlayer:start-google-auth", async (_event, companyId: string) =
     };
   }
 
+  // 1. In DEMO_MODE, bypass Google OAuth login and connect demo Google Sheet directly
+  if (isDemoMode()) {
+    console.log(`[DEMO_MODE] Connecting demo Google Sheet automatically without OAuth for companyId: ${companyId}`);
+    try {
+      const demoRes = await fetch(`${API_URL}/google/demo-connect/${companyId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = (await demoRes.json()) as any;
+      console.log("[DEMO_MODE] Demo sheet connection established:", data);
+      return {
+        success: true,
+        connected: true,
+        demoMode: true,
+        spreadsheetId: data.spreadsheetId,
+        spreadsheetUrl: data.spreadsheetUrl,
+      };
+    } catch (err) {
+      console.warn("[DEMO_MODE] Automatic demo-connect failed, falling back to browser connect:", err);
+    }
+  }
+
+  // 2. Production Google OAuth Flow (untouched for future production)
   const oauthUrl = `${API_URL}/google/connect/${companyId}`;
   console.log(`Opening browser:\n${oauthUrl}`);
 
   try {
     await shell.openExternal(oauthUrl);
-    return { success: true, url: oauthUrl };
+    return { success: true, url: oauthUrl, demoMode: false };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[MAIN] shell.openExternal failed: ${msg}`);
@@ -862,18 +897,55 @@ ipcMain.handle("finlayer:start-google-auth", async (_event, companyId: string) =
   }
 });
 
-// 6. Check Google Connection Status
-ipcMain.handle("finlayer:check-google-status", async (_event, companyId: string) => {
+// 5b. Get Sync Progress Status (for demo flow sync confirmation)
+ipcMain.handle("finlayer:get-sync-status", async (_event, companyId: string) => {
   try {
-    const res = await fetch(`${API_URL}/google/status/${companyId}`);
-    if (!res.ok) return { connected: false };
-    const data = (await res.json()) as { connected: boolean; connection?: any };
+    const res = await fetch(`${API_URL}/dashboard/financial-summary/${companyId}`);
+    if (!res.ok) return { completed: false };
+    const data = (await res.json()) as any;
+    const hasSyncHistory = Boolean(data.company?.syncHistories?.length || data.lastSync);
     return {
-      connected: Boolean(data.connected),
-      connection: data.connection || null,
+      completed: Boolean(data.success && hasSyncHistory),
+      summary: data.summary || null,
+      lastSync: data.lastSync || null,
     };
   } catch {
-    return { connected: false };
+    return { completed: false };
+  }
+});
+
+// 6. Check Google Connection Status
+ipcMain.handle("finlayer:check-google-status", async (_event, companyId: string) => {
+  if (!companyId) {
+    const state = await loadLocalState();
+    if (state.companyId) {
+      companyId = state.companyId;
+    }
+  }
+
+  console.log("[WINDOWS] Checking Google status");
+  console.log(`[WINDOWS] Company ID: ${companyId}`);
+
+  try {
+    const res = await fetch(`${API_URL}/google/status/${companyId}`);
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => "");
+      console.log(`[WINDOWS] Google connection response: HTTP ${res.status} ${errorText}`);
+      return { connected: false, companyId };
+    }
+    const data = (await res.json()) as { connected: boolean; companyId?: string; email?: string; connection?: any; demoMode?: boolean };
+    console.log("[WINDOWS] Google connection response:", JSON.stringify(data));
+    return {
+      connected: Boolean(data.connected),
+      demoMode: Boolean(data.demoMode ?? isDemoMode()),
+      companyId: data.companyId || companyId,
+      email: data.email || data.connection?.googleEmail || null,
+      connection: data.connection || null,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(`[WINDOWS] Google connection response: error - ${msg}`);
+    return { connected: false, error: msg };
   }
 });
 
@@ -887,6 +959,23 @@ ipcMain.handle("finlayer:complete-setup", async () => {
   configureConnector(state);
   if (state.connectorId) {
     startBackgroundServices(state.connectorId);
+
+    // Trigger an immediate initial sync job to sync Tally data to Google Sheet
+    try {
+      const syncRes = await fetch(`${API_URL}/sync/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          connectorId: state.connectorId,
+          type: "FINANCIAL_DATA",
+        }),
+      });
+      if (syncRes.ok) {
+        console.log(`[WINDOWS] Triggered initial FINANCIAL_DATA sync job for connector: ${state.connectorId}`);
+      }
+    } catch (e) {
+      console.warn("[WINDOWS] Could not trigger initial sync job:", e);
+    }
   }
 
   // If an update was downloaded during onboarding, notify user now that setup is complete

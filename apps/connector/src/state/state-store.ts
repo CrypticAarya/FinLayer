@@ -56,9 +56,25 @@ export interface ConnectorState {
 }
 
 export function getConnectorFilePath(): string {
+  if (process.env.FINLAYER_STATE_PATH && existsSync(process.env.FINLAYER_STATE_PATH)) {
+    return process.env.FINLAYER_STATE_PATH;
+  }
+
+  // Check AppData / Library location (used by FinLayer Windows desktop app)
+  const appDataBase = process.env.APPDATA || (
+    process.platform === "darwin"
+      ? resolve(process.env.HOME || "", "Library", "Application Support")
+      : resolve(process.env.HOME || "", ".config")
+  );
+  const appDataStatePath = resolve(appDataBase, "FinLayer", "connector-state.json");
+  if (existsSync(appDataStatePath)) {
+    return appDataStatePath;
+  }
+
   const isPkg = Boolean((process as NodeJS.Process & { pkg?: unknown }).pkg);
   if (isPkg) {
-    return resolve(dirname(process.execPath), "connector-state.json");
+    const pkgPath = resolve(dirname(process.execPath), "connector-state.json");
+    if (existsSync(pkgPath)) return pkgPath;
   }
 
   const cwdPath = resolve(process.cwd(), "connector-state.json");
@@ -73,29 +89,42 @@ export function getConnectorFilePath(): string {
     return legacyPath;
   }
 
-  return cwdPath;
+  // If AppData directory exists, prefer AppData
+  if (existsSync(resolve(appDataBase, "FinLayer"))) {
+    return appDataStatePath;
+  }
+
+  return isPkg ? resolve(dirname(process.execPath), "connector-state.json") : cwdPath;
 }
 
 export async function loadConnectorState(): Promise<ConnectorState | null> {
-  try {
-    const filePath = getConnectorFilePath();
-    const data = await readFile(filePath, "utf-8");
-    const parsed = JSON.parse(data) as ConnectorState;
-    if (parsed && parsed.deviceId && parsed.connectorId) {
-      return parsed;
-    }
-    return null;
-  } catch {
-    return null;
+  const appDataBase = process.env.APPDATA || (
+    process.platform === "darwin"
+      ? resolve(process.env.HOME || "", "Library", "Application Support")
+      : resolve(process.env.HOME || "", ".config")
+  );
+  const candidatePaths = [
+    process.env.FINLAYER_STATE_PATH,
+    resolve(appDataBase, "FinLayer", "connector-state.json"),
+    getConnectorFilePath(),
+  ].filter(Boolean) as string[];
+
+  for (const filePath of candidatePaths) {
+    try {
+      if (existsSync(filePath)) {
+        const data = await readFile(filePath, "utf-8");
+        const parsed = JSON.parse(data) as ConnectorState;
+        if (parsed && (parsed.deviceId || parsed.connectorId || parsed.tallyCompanyName)) {
+          return parsed;
+        }
+      }
+    } catch {}
   }
+  return null;
 }
 
 export async function saveConnectorState(state: ConnectorState): Promise<void> {
-  const isPkg = Boolean((process as NodeJS.Process & { pkg?: unknown }).pkg);
-  const filePath = isPkg
-    ? resolve(dirname(process.execPath), "connector-state.json")
-    : resolve(process.cwd(), "connector-state.json");
-
+  const filePath = getConnectorFilePath();
   await mkdir(dirname(filePath), { recursive: true });
   await writeFile(
     filePath,

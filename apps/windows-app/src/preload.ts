@@ -7,7 +7,8 @@ export interface FinlayerApi {
   fetchTallyCompanies: () => Promise<{ success: boolean; companies: Array<{ name: string }>; error?: string }>;
   selectCompany: (companyName: string) => Promise<{ success: boolean; companyId?: string; connectorId?: string; error?: string }>;
   startGoogleAuth: (companyId: string) => Promise<{ success: boolean; url?: string; error?: string }>;
-  checkGoogleStatus: (companyId: string) => Promise<{ connected: boolean; connection?: any }>;
+  checkGoogleStatus: (companyId: string) => Promise<{ connected: boolean; connection?: any; demoMode?: boolean }>;
+  getSyncStatus: (companyId: string) => Promise<{ completed: boolean; summary?: any; lastSync?: any }>;
   completeSetup: () => Promise<{ success: boolean }>;
   openDashboard: () => Promise<{ success: boolean }>;
   getAppVersion: () => Promise<{ appVersion: string; connectorVersion: string; updateUrl: string }>;
@@ -24,6 +25,7 @@ const api: FinlayerApi = {
   selectCompany: (name: string) => ipcRenderer.invoke("finlayer:select-company", name),
   startGoogleAuth: (companyId: string) => ipcRenderer.invoke("finlayer:start-google-auth", companyId),
   checkGoogleStatus: (companyId: string) => ipcRenderer.invoke("finlayer:check-google-status", companyId),
+  getSyncStatus: (companyId: string) => ipcRenderer.invoke("finlayer:get-sync-status", companyId),
   completeSetup: () => ipcRenderer.invoke("finlayer:complete-setup"),
   openDashboard: () => ipcRenderer.invoke("finlayer:open-dashboard"),
   getAppVersion: () => ipcRenderer.invoke("finlayer:get-app-version"),
