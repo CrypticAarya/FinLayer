@@ -1,6 +1,6 @@
 import prisma from "../db/prisma.js";
 import { decrypt } from "../utils/crypto.js";
-import { isGoogleOAuthConfigured } from "./google-sheets-service.js";
+import { isGoogleOAuthConfigured, isDemoMode } from "./google-sheets-service.js";
 import { calculateFinancialSummary, type FinancialSummary } from "./financial-summary-service.js";
 
 export interface SheetUpdateResult {
@@ -46,9 +46,15 @@ export async function refreshGoogleAccessToken(refreshToken: string): Promise<st
   const clientId = process.env.GOOGLE_CLIENT_ID || "";
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET || "";
 
-  // If in mock mode or dev mock token, return mock access token immediately
-  if (!clientId || !clientSecret || refreshToken.startsWith("mock_")) {
-    return `mock_access_token_${Date.now()}`;
+  // If in demo mode, mock mode, or dev mock/demo token, return mock access token immediately
+  if (
+    !clientId ||
+    !clientSecret ||
+    refreshToken.startsWith("mock_") ||
+    refreshToken.startsWith("demo_") ||
+    isDemoMode()
+  ) {
+    return `demo_access_token_${Date.now()}`;
   }
 
   const res = await fetch("https://oauth2.googleapis.com/token", {
@@ -79,7 +85,14 @@ async function clearTab(
   tabName: string,
   accessToken: string
 ): Promise<void> {
-  if (!isGoogleOAuthConfigured() || spreadsheetId.startsWith("1mock_") || spreadsheetId.startsWith("mock_")) {
+  if (
+    isDemoMode() ||
+    !isGoogleOAuthConfigured() ||
+    spreadsheetId.startsWith("1mock_") ||
+    spreadsheetId.startsWith("mock_") ||
+    spreadsheetId.startsWith("1demo_") ||
+    spreadsheetId.startsWith("demo_")
+  ) {
     let sheetMap = mockGoogleSheetsStore.get(spreadsheetId);
     if (!sheetMap) {
       sheetMap = new Map();
@@ -115,13 +128,21 @@ async function writeTab(
   values: any[][],
   accessToken: string
 ): Promise<void> {
-  if (!isGoogleOAuthConfigured() || spreadsheetId.startsWith("1mock_") || spreadsheetId.startsWith("mock_")) {
+  if (
+    isDemoMode() ||
+    !isGoogleOAuthConfigured() ||
+    spreadsheetId.startsWith("1mock_") ||
+    spreadsheetId.startsWith("mock_") ||
+    spreadsheetId.startsWith("1demo_") ||
+    spreadsheetId.startsWith("demo_")
+  ) {
     let sheetMap = mockGoogleSheetsStore.get(spreadsheetId);
     if (!sheetMap) {
       sheetMap = new Map();
       mockGoogleSheetsStore.set(spreadsheetId, sheetMap);
     }
     sheetMap.set(tabName, values);
+    console.log(`[DEMO_MODE] Wrote ${values.length} rows to tab "${tabName}" in sheet "${spreadsheetId}"`);
     return;
   }
 

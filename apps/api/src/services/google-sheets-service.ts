@@ -27,6 +27,19 @@ export function isGoogleOAuthConfigured(): boolean {
 }
 
 /**
+ * Checks if DEMO_MODE is explicitly enabled or defaults to true when OAuth is not configured.
+ */
+export function isDemoMode(): boolean {
+  if (process.env.DEMO_MODE === "true" || process.env.DEMO_MODE === "1") {
+    return true;
+  }
+  if (process.env.DEMO_MODE === "false" || process.env.DEMO_MODE === "0") {
+    return false;
+  }
+  return !isGoogleOAuthConfigured();
+}
+
+/**
  * Builds the Google OAuth 2.0 authorization URL.
  */
 export function getGoogleAuthUrl(companyId: string, redirectUri?: string): string {
@@ -158,6 +171,13 @@ export async function createFinancialSpreadsheet(
  * when Google credentials are not configured.
  */
 export function createMockFinancialSpreadsheet(companyName: string): CreateSpreadsheetResult {
+  if (process.env.DEMO_GOOGLE_SHEET_ID) {
+    const sheetId = process.env.DEMO_GOOGLE_SHEET_ID.trim();
+    return {
+      spreadsheetId: sheetId,
+      spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`,
+    };
+  }
   const cleanId = Buffer.from(`${companyName}-${Date.now()}`).toString("base64url").slice(0, 32);
   return {
     spreadsheetId: `1mock_${cleanId}`,

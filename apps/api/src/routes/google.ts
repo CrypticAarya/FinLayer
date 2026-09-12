@@ -3,12 +3,16 @@ import prisma from "../db/prisma.js";
 import { encrypt } from "../utils/crypto.js";
 import {
   isGoogleOAuthConfigured,
+  isDemoMode,
   getGoogleAuthUrl,
   exchangeCodeForTokens,
   createFinancialSpreadsheet,
   createMockFinancialSpreadsheet,
 } from "../services/google-sheets-service.js";
-import { getMockGoogleSheetTab } from "../services/google-sheet-sync-service.js";
+import {
+  syncCompanyFinancialDataToGoogleSheets,
+  getMockGoogleSheetTab,
+} from "../services/google-sheet-sync-service.js";
 
 interface CompanyIdParam {
   companyId: string;
@@ -34,21 +38,41 @@ export async function googleRoutes(app: FastifyInstance): Promise<void> {
     async (request: FastifyRequest<{ Params: CompanyIdParam }>, reply: FastifyReply) => {
       const { companyId } = request.params;
 
-      const company = await prisma.company.findUnique({
+      let company = await prisma.company.findUnique({
         where: { id: companyId },
       });
+
+      if (!company) {
+        // Fallback: Check if companyId is tallyCompanyName or name
+        company = await prisma.company.findFirst({
+          where: {
+            OR: [
+              { tallyCompanyName: companyId },
+              { name: companyId },
+            ],
+          },
+        });
+      }
 
       if (!company) {
         return reply.status(404).send({ success: false, error: `Company "${companyId}" not found.` });
       }
 
-      if (isGoogleOAuthConfigured()) {
-        const authUrl = getGoogleAuthUrl(companyId);
+      console.log(`[GOOGLE] OAuth started for companyId: ${company.id} (${company.name})`);
+      request.log.info({ companyId: company.id, companyName: company.name }, "[GOOGLE] OAuth started");
+
+      const host = request.headers.host;
+      const protocol = request.protocol || "http";
+      const redirectUri = process.env.GOOGLE_REDIRECT_URI || (host ? `${protocol}://${host}/google/callback` : undefined);
+
+      if (!isDemoMode() && isGoogleOAuthConfigured()) {
+        const authUrl = getGoogleAuthUrl(company.id, redirectUri);
         return reply.redirect(authUrl);
       }
 
-      // In development when credentials are not yet added, fallback to demo/mock flow
-      return reply.redirect(`/google/callback?state=${companyId}&mock=true`);
+      // When DEMO_MODE=true or OAuth is not configured: bypass OAuth and use demo Google Sheet connector
+      console.log(`[GOOGLE] DEMO_MODE active: Bypassing Google OAuth, auto-connecting demo Google Sheet for "${company.name}"`);
+      return reply.redirect(`/google/callback?state=${company.id}&mock=true`);
     }
   );
 
@@ -57,6 +81,9 @@ export async function googleRoutes(app: FastifyInstance): Promise<void> {
     "/google/callback",
     async (request: FastifyRequest<{ Querystring: CallbackQuery }>, reply: FastifyReply) => {
       const { code, state: companyId, mock, error } = request.query;
+
+      console.log(`[GOOGLE] Redirect received - state: ${companyId || "none"}, code: ${code ? "present" : "none"}, mock: ${Boolean(mock)}, error: ${error || "none"}`);
+      request.log.info({ companyId, hasCode: Boolean(code), mock, error }, "[GOOGLE] Redirect received");
 
       if (error) {
         return reply.redirect(`/setup/google?companyId=${companyId || ""}&error=${encodeURIComponent(error)}`);
@@ -80,11 +107,18 @@ export async function googleRoutes(app: FastifyInstance): Promise<void> {
         let spreadsheetId = "";
         let spreadsheetUrl = "";
 
+        const host = request.headers.host;
+        const protocol = request.protocol || "http";
+        const redirectUri = process.env.GOOGLE_REDIRECT_URI || (host ? `${protocol}://${host}/google/callback` : undefined);
+
         if (code && !mock) {
           // Live Google OAuth flow
-          const tokens = await exchangeCodeForTokens(code);
+          const tokens = await exchangeCodeForTokens(code, redirectUri);
           googleEmail = tokens.email;
           rawRefreshToken = tokens.refreshToken || "access_token_holder";
+
+          console.log(`[GOOGLE] Token received - email: ${googleEmail}`);
+          request.log.info({ googleEmail }, "[GOOGLE] Token received");
 
           // Create spreadsheet with Dashboard, Trial Balance, Ledgers, Transactions tabs
           const sheet = await createFinancialSpreadsheet(tokens.accessToken, company.name);
@@ -96,29 +130,47 @@ export async function googleRoutes(app: FastifyInstance): Promise<void> {
           spreadsheetId = mockSheet.spreadsheetId;
           spreadsheetUrl = mockSheet.spreadsheetUrl;
           googleEmail = `finance@${company.name.toLowerCase().replace(/[^a-z0-9]/g, "") || "company"}.com`;
+
+          console.log(`[GOOGLE] Token received (demo/mock) - email: ${googleEmail}`);
+          request.log.info({ googleEmail }, "[GOOGLE] Token received");
         }
 
-        const encryptedRefreshToken = encrypt(rawRefreshToken);
+        const existingConn = await prisma.googleConnection.findUnique({
+          where: { companyId },
+        });
+        const refreshTokenToSave = (rawRefreshToken === "access_token_holder" && existingConn?.refreshToken)
+          ? existingConn.refreshToken
+          : encrypt(rawRefreshToken);
 
         // 1. Save or update Google connection
         await prisma.googleConnection.upsert({
           where: { companyId },
           update: {
             googleEmail,
-            refreshToken: encryptedRefreshToken,
+            refreshToken: refreshTokenToSave,
             spreadsheetId,
             spreadsheetUrl,
           },
           create: {
             companyId,
             googleEmail,
-            refreshToken: encryptedRefreshToken,
+            refreshToken: refreshTokenToSave,
             spreadsheetId,
             spreadsheetUrl,
           },
         });
 
+        console.log(`[GOOGLE] Token stored for company: ${companyId} (${company.name})`);
+        request.log.info({ companyId, googleEmail }, "[GOOGLE] Token stored");
+
+        console.log(`[GOOGLE] Sheet connection created: ${spreadsheetId} (${spreadsheetUrl})`);
+        request.log.info({ companyId, spreadsheetId, spreadsheetUrl }, "[GOOGLE] Sheet connection created");
+
         // 2. Advance linked connectors to ACTIVE
+        const linkedConnectors = await prisma.connector.findMany({
+          where: { companyId },
+        });
+
         await prisma.connector.updateMany({
           where: {
             companyId,
@@ -128,6 +180,25 @@ export async function googleRoutes(app: FastifyInstance): Promise<void> {
             setupStatus: "ACTIVE",
           },
         });
+
+        // 3. Queue an immediate FINANCIAL_DATA sync job for each linked connector
+        for (const conn of linkedConnectors) {
+          await prisma.syncJob.create({
+            data: {
+              connectorId: conn.id,
+              type: "FINANCIAL_DATA",
+              status: "PENDING",
+            },
+          });
+          request.log.info({ connectorId: conn.id, companyId }, "Queued initial FINANCIAL_DATA sync job for connector");
+        }
+
+        // 4. Immediately push any existing financial data (Trial Balance, Ledgers, Transactions) to the sheet
+        try {
+          await syncCompanyFinancialDataToGoogleSheets(companyId);
+        } catch (syncErr) {
+          request.log.warn({ syncErr }, "Initial sheet population warning");
+        }
 
         request.log.info({ companyId, googleEmail, spreadsheetId }, "Google Connection established and spreadsheet created");
 
@@ -146,14 +217,38 @@ export async function googleRoutes(app: FastifyInstance): Promise<void> {
     async (request: FastifyRequest<{ Params: CompanyIdParam }>, reply: FastifyReply) => {
       const { companyId } = request.params;
 
-      const connection = await prisma.googleConnection.findUnique({
-        where: { companyId },
+      let company = await prisma.company.findUnique({
+        where: { id: companyId },
       });
 
+      if (!company) {
+        company = await prisma.company.findFirst({
+          where: {
+            OR: [
+              { tallyCompanyName: companyId },
+              { name: companyId },
+            ],
+          },
+        });
+      }
+
+      const effectiveCompanyId = company ? company.id : companyId;
+
+      const connection = await prisma.googleConnection.findUnique({
+        where: { companyId: effectiveCompanyId },
+      });
+
+      const isConnected = Boolean(connection);
+
       return reply.status(200).send({
+        connected: isConnected,
+        companyId: effectiveCompanyId,
+        email: connection ? connection.googleEmail : null,
         success: true,
+        demoMode: isDemoMode(),
         oauthConfigured: isGoogleOAuthConfigured(),
-        connected: Boolean(connection),
+        spreadsheetId: connection?.spreadsheetId || null,
+        spreadsheetUrl: connection?.spreadsheetUrl || null,
         connection: connection
           ? {
               googleEmail: connection.googleEmail,
@@ -166,64 +261,111 @@ export async function googleRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
-  // ─── POST /google/mock-connect/:companyId ────────────────────────────────────
-  app.post<{ Params: CompanyIdParam; Body: MockConnectBody }>(
-    "/google/mock-connect/:companyId",
-    async (request: FastifyRequest<{ Params: CompanyIdParam; Body: MockConnectBody }>, reply: FastifyReply) => {
-      const { companyId } = request.params;
-      const { googleEmail: reqEmail, spreadsheetId: reqSheetId, spreadsheetUrl: reqSheetUrl } = request.body || {};
+  // ─── POST /google/demo-connect/:companyId & /google/mock-connect/:companyId ──
+  const handleDemoConnect = async (request: FastifyRequest<{ Params: CompanyIdParam; Body: MockConnectBody }>, reply: FastifyReply) => {
+    const { companyId } = request.params;
+    const { googleEmail: reqEmail, spreadsheetId: reqSheetId, spreadsheetUrl: reqSheetUrl } = request.body || {};
 
-      const company = await prisma.company.findUnique({ where: { id: companyId } });
-      if (!company) {
-        return reply.status(404).send({ success: false, error: `Company "${companyId}" not found.` });
-      }
-
-      const mockSheet = createMockFinancialSpreadsheet(company.name);
-      const spreadsheetId = reqSheetId || mockSheet.spreadsheetId;
-      const spreadsheetUrl = reqSheetUrl || mockSheet.spreadsheetUrl;
-      const googleEmail = reqEmail || `finance@${company.name.toLowerCase().replace(/[^a-z0-9]/g, "") || "company"}.com`;
-      const encryptedRefreshToken = encrypt(`mock_refresh_${Date.now()}`);
-
-      const connection = await prisma.googleConnection.upsert({
-        where: { companyId },
-        update: {
-          googleEmail,
-          refreshToken: encryptedRefreshToken,
-          spreadsheetId,
-          spreadsheetUrl,
-        },
-        create: {
-          companyId,
-          googleEmail,
-          refreshToken: encryptedRefreshToken,
-          spreadsheetId,
-          spreadsheetUrl,
-        },
-      });
-
-      // Advance linked connectors to ACTIVE
-      await prisma.connector.updateMany({
+    let company = await prisma.company.findUnique({ where: { id: companyId } });
+    if (!company) {
+      company = await prisma.company.findFirst({
         where: {
-          companyId,
-          setupStatus: { in: ["WAITING_FOR_GOOGLE", "WAITING_FOR_COMPANY", "REGISTERED"] },
-        },
-        data: {
-          setupStatus: "ACTIVE",
-        },
-      });
-
-      return reply.status(200).send({
-        success: true,
-        connection: {
-          id: connection.id,
-          companyId: connection.companyId,
-          googleEmail: connection.googleEmail,
-          spreadsheetId: connection.spreadsheetId,
-          spreadsheetUrl: connection.spreadsheetUrl,
+          OR: [
+            { tallyCompanyName: companyId },
+            { name: companyId },
+          ],
         },
       });
     }
-  );
+
+    if (!company) {
+      return reply.status(404).send({ success: false, error: `Company "${companyId}" not found.` });
+    }
+
+    console.log(`[GOOGLE] DEMO_MODE active: Connecting demo sheet for company "${company.name}" (${company.id})`);
+
+    const mockSheet = createMockFinancialSpreadsheet(company.name);
+    const spreadsheetId = reqSheetId || mockSheet.spreadsheetId;
+    const spreadsheetUrl = reqSheetUrl || mockSheet.spreadsheetUrl;
+    const googleEmail = reqEmail || `demo.finance@${company.name.toLowerCase().replace(/[^a-z0-9]/g, "") || "company"}.com`;
+    const encryptedRefreshToken = encrypt(`demo_refresh_${Date.now()}`);
+
+    console.log(`[GOOGLE] Token received (demo sheet) - email: ${googleEmail}`);
+
+    const connection = await prisma.googleConnection.upsert({
+      where: { companyId: company.id },
+      update: {
+        googleEmail,
+        refreshToken: encryptedRefreshToken,
+        spreadsheetId,
+        spreadsheetUrl,
+      },
+      create: {
+        companyId: company.id,
+        googleEmail,
+        refreshToken: encryptedRefreshToken,
+        spreadsheetId,
+        spreadsheetUrl,
+      },
+    });
+
+    console.log(`[GOOGLE] Token stored for company: ${company.id} (${company.name})`);
+    console.log(`[GOOGLE] Sheet connection created: ${spreadsheetId} (${spreadsheetUrl})`);
+
+    // Advance linked connectors to ACTIVE
+    const linkedConnectors = await prisma.connector.findMany({
+      where: { companyId: company.id },
+    });
+
+    await prisma.connector.updateMany({
+      where: {
+        companyId: company.id,
+        setupStatus: { in: ["WAITING_FOR_GOOGLE", "WAITING_FOR_COMPANY", "REGISTERED"] },
+      },
+      data: {
+        setupStatus: "ACTIVE",
+      },
+    });
+
+    // Queue an immediate FINANCIAL_DATA sync job for each linked connector
+    for (const conn of linkedConnectors) {
+      await prisma.syncJob.create({
+        data: {
+          connectorId: conn.id,
+          type: "FINANCIAL_DATA",
+          status: "PENDING",
+        },
+      });
+      request.log.info({ connectorId: conn.id, companyId: company.id }, "Queued initial FINANCIAL_DATA sync job for connector");
+    }
+
+    // Push initial financial data to sheet
+    try {
+      await syncCompanyFinancialDataToGoogleSheets(company.id);
+    } catch (syncErr) {
+      request.log.warn({ syncErr }, "Initial sheet population warning");
+    }
+
+    return reply.status(200).send({
+      connected: true,
+      companyId: company.id,
+      email: connection.googleEmail,
+      spreadsheetId: connection.spreadsheetId,
+      spreadsheetUrl: connection.spreadsheetUrl,
+      demoMode: true,
+      success: true,
+      connection: {
+        id: connection.id,
+        companyId: connection.companyId,
+        googleEmail: connection.googleEmail,
+        spreadsheetId: connection.spreadsheetId,
+        spreadsheetUrl: connection.spreadsheetUrl,
+      },
+    });
+  };
+
+  app.post<{ Params: CompanyIdParam; Body: MockConnectBody }>("/google/demo-connect/:companyId", handleDemoConnect);
+  app.post<{ Params: CompanyIdParam; Body: MockConnectBody }>("/google/mock-connect/:companyId", handleDemoConnect);
 
   // ─── GET /google/mock-sheet/:spreadsheetId ──────────────────────────────────
   app.get<{ Params: { spreadsheetId: string }; Querystring: { tab?: string } }>(
