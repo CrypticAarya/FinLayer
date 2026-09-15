@@ -30,6 +30,10 @@ jobs:
           npm --prefix apps/connector install
           npm --prefix apps/api install
 
+      - name: Generate Prisma Client
+        run: |
+          cd apps/api && npx prisma generate
+
       - name: Run Typechecks
         run: |
           npm --prefix apps/windows-app run typecheck

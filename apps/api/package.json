@@ -9,6 +9,8 @@
     "start": "tsx src/index.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "generate": "prisma generate",
+    "prisma:generate": "prisma generate",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
