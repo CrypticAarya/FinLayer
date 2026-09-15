@@ -1,5 +1,8 @@
 name: Build and Release FinLayer Windows App
 
+permissions:
+  contents: write
+
 on:
   push:
     branches:
