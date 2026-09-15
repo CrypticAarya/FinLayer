@@ -167,13 +167,41 @@
       companyLoadingView.style.display = "none";
 
       if (res.success && res.companyName) {
-        currentCompanyId = res.companyId || null;
         currentCompanyName = res.companyName;
+        currentCompanyId = res.companyId || null;
+
+        if (!currentCompanyId) {
+          try {
+            const init = await window.finlayer.getInitialState();
+            if (init?.state?.companyId) {
+              currentCompanyId = init.state.companyId;
+            }
+          } catch {}
+        }
+
+        if (!currentCompanyId) {
+          try {
+            const sel = await window.finlayer.selectCompany(currentCompanyName);
+            if (sel?.success && sel?.companyId) {
+              currentCompanyId = sel.companyId;
+            }
+          } catch (e) {
+            console.warn("[COMPANY STATE] Failed to map company during detection:", e);
+          }
+        }
 
         if (currentCompanyId) {
           localStorage.setItem("finlayer-company-id", currentCompanyId);
           updateDebugCompanyId(currentCompanyId);
         }
+        if (currentCompanyName) {
+          localStorage.setItem("finlayer-company-name", currentCompanyName);
+        }
+
+        console.log("[COMPANY STATE]");
+        console.log("Detected company:", currentCompanyName);
+        console.log("Company ID:", currentCompanyId);
+        console.log("Saved to localStorage:", localStorage.getItem("finlayer-company-id"));
 
         detectedCompanyName.textContent = res.companyName;
         companyCardTitle.textContent = "Tally Connected ✅";
@@ -203,10 +231,10 @@
 
   function showGoogleError(msg) {
     if (googleErrorMessage) {
-      googleErrorMessage.textContent = msg || "Unable to connect Google. Company information missing.";
+      googleErrorMessage.textContent = msg || "Please retry company detection";
       googleErrorMessage.style.display = "block";
     }
-    setFooter("Error connecting Google Account");
+    setFooter("Please retry company detection");
   }
 
   function hideGoogleError() {
@@ -432,7 +460,7 @@
 
     if (!companyId) {
       console.error("[GOOGLE BUTTON] Company ID missing!");
-      showGoogleError("Unable to connect Google. Company information missing.");
+      showGoogleError("Please retry company detection");
       return;
     }
 
@@ -448,7 +476,7 @@
       console.log("[Google] Google auth result:", result);
 
       if (!result || !result.success) {
-        showGoogleError(result?.error || "Unable to connect Google. Company information missing.");
+        showGoogleError(result?.error || "Please retry company detection");
         return;
       }
 
@@ -468,7 +496,7 @@
       }
     } catch (err) {
       console.error("[Google] startGoogleAuth error:", err);
-      showGoogleError("Unable to connect Google. Company information missing.");
+      showGoogleError("Please retry company detection");
     }
   }
 
@@ -487,6 +515,15 @@
   attachGoogleButtonListener();
 
   btnContinueCompany.addEventListener("click", async () => {
+    btnContinueCompany.disabled = true;
+
+    // Verify companyId exists.
+    // Priority:
+    // currentCompanyId
+    // ↓
+    // localStorage finlayer-company-id
+    // ↓
+    // window.finlayer.getInitialState()
     let companyId = currentCompanyId;
 
     if (!companyId) {
@@ -499,9 +536,31 @@
         if (init?.state?.companyId) {
           companyId = init.state.companyId;
         }
-      } catch {}
+      } catch (err) {
+        console.warn("[COMPANY STATE] Error loading initial state:", err);
+      }
     }
 
+    // If still missing: call fetchActiveCompany() again.
+    if (!companyId) {
+      console.log("[COMPANY STATE] companyId missing on Continue. Retrying fetchActiveCompany()...");
+      try {
+        const retryRes = await window.finlayer.fetchActiveCompany();
+        if (retryRes?.success) {
+          if (retryRes.companyName) {
+            currentCompanyName = retryRes.companyName;
+            localStorage.setItem("finlayer-company-name", currentCompanyName);
+          }
+          if (retryRes.companyId) {
+            companyId = retryRes.companyId;
+          }
+        }
+      } catch (err) {
+        console.warn("[COMPANY STATE] Retry fetchActiveCompany failed:", err);
+      }
+    }
+
+    // If still missing and currentCompanyName is known, attempt selectCompany
     if (!companyId && currentCompanyName) {
       try {
         const sel = await window.finlayer.selectCompany(currentCompanyName);
@@ -509,16 +568,31 @@
           companyId = sel.companyId;
         }
       } catch (err) {
-        console.warn("Dynamic selectCompany failed:", err);
+        console.warn("[COMPANY STATE] Dynamic selectCompany failed:", err);
       }
     }
 
-    if (companyId) {
-      currentCompanyId = companyId;
-      localStorage.setItem("finlayer-company-id", companyId);
-      updateDebugCompanyId(companyId);
+    // Do not allow transition to Google step without companyId.
+    if (!companyId) {
+      btnContinueCompany.disabled = false;
+      console.error("[COMPANY STATE] Transition prevented: companyId missing!");
+      showGoogleError("Please retry company detection");
+      companyCardSubtitle.textContent = "Please retry company detection";
+      setFooter("Please retry company detection");
+      return;
     }
 
+    currentCompanyId = companyId;
+    localStorage.setItem("finlayer-company-id", companyId);
+    if (currentCompanyName) {
+      localStorage.setItem("finlayer-company-name", currentCompanyName);
+    }
+    updateDebugCompanyId(companyId);
+
+    console.log("[COMPANY STATE]");
+    console.log("Moving to Google Step:", companyId);
+
+    btnContinueCompany.disabled = false;
     goToStep(4);
     initGoogleStep(companyId);
   });

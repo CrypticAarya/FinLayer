@@ -856,7 +856,7 @@ ipcMain.handle("finlayer:start-google-auth", async (_event, companyId: string) =
     console.error("[MAIN] Google auth failed: Company ID missing");
     return {
       success: false,
-      error: "Unable to connect Google. Company information missing.",
+      error: "Please retry company detection",
     };
   }
 
