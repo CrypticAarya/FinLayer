@@ -14,9 +14,21 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "test:idempotency": "tsx test/voucher-idempotency.test.ts",
+    "test:validation": "tsx test/accounting-validation.test.ts",
+    "test:sync-audit": "tsx test/sync-run-and-audit.test.ts",
+    "test:connector-auth": "tsx test/security-connector-auth.test.ts",
+    "test:connector-registration": "tsx test/security-connector-registration.test.ts",
+    "test:tenant-isolation": "tsx test/security-tenant-isolation.test.ts",
+    "test:dashboard-auth": "tsx test/security-dashboard-auth.test.ts",
+    "test:blockers": "tsx test/security-pairing-and-blockers.test.ts",
+    "test:anti-hijack": "tsx test/security-provisioning-anti-hijack.test.ts",
+    "test:log-redaction": "tsx test/security-log-redaction.test.ts",
+    "test:export": "tsx test/canonical-export.test.ts"
   },
   "dependencies": {
+    "@fastify/rate-limit": "^11.2.0",
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "dotenv": "^17.4.2",

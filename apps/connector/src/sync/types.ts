@@ -18,6 +18,9 @@ export interface VoucherEntry {
 }
 
 export interface Voucher {
+  masterId: number;
+  alterId: number;
+  guid?: string;
   voucherNumber: string;
   voucherType: string;
   date: string;

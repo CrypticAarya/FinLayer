@@ -21,11 +21,13 @@ model Company {
   ledgers             Ledger[]
   syncLogs            SyncLog[]
   vouchers            Voucher[]
+  syncRuns            SyncRun[]
   connectors          Connector[]
   mappings            SaasCompanyMapping[]
   trialBalanceEntries TrialBalanceEntry[]
   googleConnection    GoogleConnection?
   syncHistories       SyncHistory[]
+  members             CompanyMember[]
 }
 
 model Ledger {
@@ -58,32 +60,80 @@ model SyncLog {
   @@index([companyId])
 }
 
+// ─── Sync Run & Audit Trail Models ────────────────────────────────────────────
+
+model SyncRun {
+  id             String         @id @default(cuid())
+  companyId      String
+  status         String         @default("SYNC_STARTED") // SYNC_STARTED, SYNC_VALIDATING, SYNC_PROCESSING, SYNC_COMPLETED, SYNC_FAILED
+  startedAt      DateTime       @default(now())
+  completedAt    DateTime?
+  recordsFetched Int            @default(0)
+  recordsCreated Int            @default(0)
+  recordsUpdated Int            @default(0)
+  recordsFailed  Int            @default(0)
+  errorSummary   String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  company   Company        @relation(fields: [companyId], references: [id])
+  vouchers  Voucher[]
+  auditLogs SyncAuditLog[]
+
+  @@index([companyId])
+  @@index([companyId, status])
+  @@index([companyId, startedAt])
+}
+
+model SyncAuditLog {
+  id        String   @id @default(cuid())
+  syncRunId String
+  stage     String   // SYNC_STARTED, SYNC_VALIDATING, SYNC_PROCESSING, SYNC_COMPLETED, SYNC_FAILED
+  message   String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  syncRun SyncRun @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
+
+  @@index([syncRunId])
+  @@index([syncRunId, createdAt])
+}
+
 // ─── Transaction Models ───────────────────────────────────────────────────────
 
 model Voucher {
   id            String   @id @default(cuid())
   companyId     String
+  masterId      Int
+  alterId       Int
+  guid          String?
+  syncRunId     String?
   voucherNumber String
   voucherType   String
   date          DateTime
   partyName     String?
-  amount        Float
+  amount        Decimal  @db.Decimal(15, 2)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   company        Company        @relation(fields: [companyId], references: [id])
+  syncRun        SyncRun?       @relation(fields: [syncRunId], references: [id], onDelete: SetNull)
   voucherEntries VoucherEntry[]
 
+  @@unique([companyId, masterId])
   @@index([companyId])
   @@index([date])
   @@index([companyId, voucherType])
+  @@index([companyId, date, id])
+  @@index([guid])
+  @@index([syncRunId])
 }
 
 model VoucherEntry {
   id        String   @id @default(cuid())
   voucherId String
   ledgerId  String
-  amount    Float
+  amount    Decimal  @db.Decimal(15, 2)
   type      String   // "debit" | "credit"
   createdAt DateTime @default(now())
 
@@ -101,6 +151,10 @@ model Connector {
   companyId        String?
   name             String
   deviceId         String    @unique
+  tokenHash        String?   @unique
+  tokenCreatedAt   DateTime?
+  tokenLastUsedAt  DateTime?
+  tokenRevokedAt   DateTime?
   operatingSystem  String?
   status           String    @default("ONLINE")
   setupStatus      String    @default("REGISTERED")
@@ -113,6 +167,7 @@ model Connector {
   syncJobs SyncJob[]
 
   @@index([companyId])
+  @@index([tokenHash])
 }
 
 // ─── Sync Job Models ──────────────────────────────────────────────────────────
@@ -212,6 +267,52 @@ model SyncHistory {
 
   @@index([companyId])
   @@index([companyId, createdAt])
+}
+
+// ─── User & Dashboard Identity Models ───────────────────────────────────────
+
+model User {
+  id           String          @id @default(cuid())
+  email        String          @unique
+  name         String
+  passwordHash String?
+  role         String          @default("USER") // "SUPER_ADMIN" | "USER"
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  memberships  CompanyMember[]
+  sessions     UserSession[]
+
+  @@index([email])
+}
+
+model CompanyMember {
+  id        String   @id @default(cuid())
+  userId    String
+  companyId String
+  role      String   @default("MEMBER") // "OWNER" | "ADMIN" | "MEMBER" | "VIEWER"
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, companyId])
+  @@index([userId])
+  @@index([companyId])
+}
+
+model UserSession {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tokenHash])
+  @@index([userId])
 }
 
 

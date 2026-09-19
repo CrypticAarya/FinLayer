@@ -1,7 +1,7 @@
 {
   "name": "finlayer-windows-app",
   "productName": "FinLayer",
-  "version": "1.0.3",
+  "version": "2.0.0",
   "description": "FinLayer Connector Desktop App for TallyPrime and Google Sheets",
   "main": "dist/main.js",
   "author": "FinLayer",

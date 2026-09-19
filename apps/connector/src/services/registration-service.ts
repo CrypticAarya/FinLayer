@@ -3,9 +3,11 @@ import os from "node:os";
 import { config } from "../config.js";
 import {
   registerConnectorWithApi,
+  upgradeV1ConnectorToken,
   sendHeartbeatToApi,
   reportTallyConnected,
   reportTallyCompanies,
+  setConnectorToken,
 } from "../api/client.js";
 import {
   loadConnectorState,
@@ -50,9 +52,32 @@ export async function registerAndStartHeartbeat(): Promise<RegistrationResult> {
   // 1. Check for existing local registration
   const existingState = await loadConnectorState();
   if (existingState && existingState.connectorId) {
+    if (existingState.connectorToken) {
+      setConnectorToken(existingState.connectorToken);
+    } else if (existingState.deviceId) {
+      // V1 -> V2 Upgrade Bridge: Automatically provision secure token for legitimate existing connector
+      try {
+        logger.info(
+          `V1 -> V2 Upgrade: Provisioning secure token for existing connector "${existingState.connectorId}"...`
+        );
+        const upgrade = await upgradeV1ConnectorToken(
+          existingState.connectorId,
+          existingState.deviceId
+        );
+        existingState.connectorToken = upgrade.token;
+        setConnectorToken(upgrade.token);
+        await saveConnectorState(existingState);
+        logger.info("V1 -> V2 Upgrade: Secure token provisioned successfully.");
+      } catch (upgradeErr) {
+        logger.warn(
+          `V1 -> V2 Upgrade: Could not provision token: ${upgradeErr instanceof Error ? upgradeErr.message : String(upgradeErr)}`
+        );
+      }
+    }
     logger.info(
       `Using existing connector registration (ID: ${existingState.connectorId}, Device: ${existingState.deviceId})`
     );
+
 
     // If connector is not yet ACTIVE, perform onboarding discovery
     if (existingState.setupStatus !== "ACTIVE" && !existingState.companyId) {
@@ -142,7 +167,7 @@ export async function registerAndStartHeartbeat(): Promise<RegistrationResult> {
     `deviceId="${deviceId}" deviceName="${deviceName}" operatingSystem="${operatingSystem}"`
   );
 
-  const { connectorId } = await registerConnectorWithApi({
+  const { connectorId, token } = await registerConnectorWithApi({
     deviceId,
     deviceName,
     operatingSystem,
@@ -154,6 +179,7 @@ export async function registerAndStartHeartbeat(): Promise<RegistrationResult> {
   const state: ConnectorState = {
     deviceId,
     connectorId,
+    connectorToken: token,
     registeredAt: new Date().toISOString(),
     deviceName,
     operatingSystem,

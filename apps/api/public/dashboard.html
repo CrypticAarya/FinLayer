@@ -465,6 +465,47 @@
         </div>
       </div>
 
+      <!-- ── Export Data Card ── -->
+      <div class="card" id="export-data-card" style="margin-bottom:16px;">
+        <div class="card-title">
+          <span>Export Stored Data</span>
+          <span style="font-size:0.72rem;color:var(--text-muted);background:var(--surface2);padding:2px 8px;border-radius:4px;border:1px solid var(--border);">Canonical CSV / XML</span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;padding-top:6px;">
+          <div style="display:flex;flex-direction:column;gap:4px;min-width:160px;flex:1;">
+            <label for="export-data-type" style="font-size:0.78rem;font-weight:600;color:var(--text-muted);">Data Type</label>
+            <select id="export-data-type" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:0.85rem;" onchange="handleExportTypeChange()">
+              <option value="vouchers">Vouchers (Transactions)</option>
+              <option value="ledgers">Ledgers (Chart of Accounts)</option>
+              <option value="trial-balance">Trial Balance (Balances)</option>
+            </select>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:4px;width:110px;">
+            <label for="export-data-format" style="font-size:0.78rem;font-weight:600;color:var(--text-muted);">Format</label>
+            <select id="export-data-format" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:0.85rem;">
+              <option value="csv">CSV</option>
+              <option value="xml">XML</option>
+            </select>
+          </div>
+
+          <div id="export-date-range-wrap" style="display:flex;gap:8px;flex:1.5;min-width:250px;">
+            <div style="display:flex;flex-direction:column;gap:4px;flex:1;">
+              <label for="export-from-date" style="font-size:0.78rem;font-weight:600;color:var(--text-muted);">From Date (Optional)</label>
+              <input type="date" id="export-from-date" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:0.85rem;" />
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px;flex:1;">
+              <label for="export-to-date" style="font-size:0.78rem;font-weight:600;color:var(--text-muted);">To Date (Optional)</label>
+              <input type="date" id="export-to-date" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:0.85rem;" />
+            </div>
+          </div>
+
+          <button class="btn-primary" id="btn-export-download" onclick="triggerExportDownload()" style="height:38px;padding:0 22px;font-size:0.85rem;font-weight:600;display:flex;align-items:center;gap:6px;">
+            📥 Download
+          </button>
+        </div>
+      </div>
+
     </div>
 
     <!-- ── 2. Financial Summary Cards (6 Key Metrics) ── -->
@@ -971,6 +1012,75 @@ function togglePgSection() {
   const open = content.style.display === 'none';
   content.style.display = open ? 'block' : 'none';
   chevron.textContent = open ? '▴' : '▾';
+function handleExportTypeChange() {
+  const type = document.getElementById('export-data-type').value;
+  const dateWrap = document.getElementById('export-date-range-wrap');
+  if (type === 'vouchers') {
+    dateWrap.style.opacity = '1';
+    dateWrap.style.pointerEvents = 'auto';
+  } else {
+    dateWrap.style.opacity = '0.35';
+    dateWrap.style.pointerEvents = 'none';
+  }
+}
+
+async function triggerExportDownload() {
+  if (!selectedCompanyId) {
+    toast('Please select a company first', 'error');
+    return;
+  }
+  const type = document.getElementById('export-data-type').value;
+  const format = document.getElementById('export-data-format').value;
+  const fromDate = document.getElementById('export-from-date').value;
+  const toDate = document.getElementById('export-to-date').value;
+
+  let url = `${API}/dashboard/export/${selectedCompanyId}?type=${type}&format=${format}`;
+  if (type === 'vouchers') {
+    if (fromDate) url += `&fromDate=${encodeURIComponent(fromDate)}`;
+    if (toDate) url += `&toDate=${encodeURIComponent(toDate)}`;
+  }
+
+  // Token retrieval (localStorage -> sessionStorage -> global-api-key input)
+  const token = localStorage.getItem('finlayer_token') || sessionStorage.getItem('finlayer_token') || document.getElementById('global-api-key')?.value?.trim();
+
+  const btn = document.getElementById('btn-export-download');
+  btn.disabled = true;
+  btn.textContent = 'Preparing…';
+
+  try {
+    const res = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+
+    const blob = await res.blob();
+    const disposition = res.headers.get('Content-Disposition');
+    let filename = `${type}.${format}`;
+    if (disposition && disposition.includes('filename=')) {
+      const match = disposition.match(/filename=["']?([^"';]+)["']?/i);
+      if (match && match[1]) filename = match[1].trim();
+    }
+
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(blobUrl);
+
+    toast(`Export downloaded: ${filename}`, 'success');
+  } catch (e) {
+    toast(`Export failed: ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📥 Download';
+  }
 }
 
 document.addEventListener('DOMContentLoaded', loadData);

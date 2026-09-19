@@ -13,6 +13,7 @@ import {
   syncCompanyFinancialDataToGoogleSheets,
   getMockGoogleSheetTab,
 } from "../services/google-sheet-sync-service.js";
+import { authenticateUserOrConnector, requireTenantCompanyAccess } from "../auth/tenant-auth.js";
 
 interface CompanyIdParam {
   companyId: string;
@@ -35,6 +36,7 @@ export async function googleRoutes(app: FastifyInstance): Promise<void> {
   // ─── GET /google/connect/:companyId ─────────────────────────────────────────
   app.get<{ Params: CompanyIdParam }>(
     "/google/connect/:companyId",
+    { preHandler: [authenticateUserOrConnector, requireTenantCompanyAccess()] },
     async (request: FastifyRequest<{ Params: CompanyIdParam }>, reply: FastifyReply) => {
       const { companyId } = request.params;
 
@@ -70,6 +72,13 @@ export async function googleRoutes(app: FastifyInstance): Promise<void> {
         return reply.redirect(authUrl);
       }
 
+      if (process.env.NODE_ENV === "production") {
+        return reply.status(500).send({
+          success: false,
+          error: "Google OAuth is not configured for production.",
+        });
+      }
+
       // When DEMO_MODE=true or OAuth is not configured: bypass OAuth and use demo Google Sheet connector
       console.log(`[GOOGLE] DEMO_MODE active: Bypassing Google OAuth, auto-connecting demo Google Sheet for "${company.name}"`);
       return reply.redirect(`/google/callback?state=${company.id}&mock=true`);
@@ -91,6 +100,10 @@ export async function googleRoutes(app: FastifyInstance): Promise<void> {
 
       if (!companyId) {
         return reply.status(400).send({ success: false, error: "Missing state (companyId) in callback." });
+      }
+
+      if (mock && process.env.NODE_ENV === "production") {
+        return reply.status(403).send({ success: false, error: "Mock OAuth callbacks are disabled in production." });
       }
 
       const company = await prisma.company.findUnique({
@@ -214,6 +227,7 @@ export async function googleRoutes(app: FastifyInstance): Promise<void> {
   // ─── GET /google/status/:companyId ──────────────────────────────────────────
   app.get<{ Params: CompanyIdParam }>(
     "/google/status/:companyId",
+    { preHandler: [authenticateUserOrConnector, requireTenantCompanyAccess()] },
     async (request: FastifyRequest<{ Params: CompanyIdParam }>, reply: FastifyReply) => {
       const { companyId } = request.params;
 
@@ -263,6 +277,13 @@ export async function googleRoutes(app: FastifyInstance): Promise<void> {
 
   // ─── POST /google/demo-connect/:companyId & /google/mock-connect/:companyId ──
   const handleDemoConnect = async (request: FastifyRequest<{ Params: CompanyIdParam; Body: MockConnectBody }>, reply: FastifyReply) => {
+    if (process.env.NODE_ENV === "production") {
+      return reply.status(403).send({
+        success: false,
+        error: "Forbidden: Demo and mock routes are disabled in production.",
+      });
+    }
+
     const { companyId } = request.params;
     const { googleEmail: reqEmail, spreadsheetId: reqSheetId, spreadsheetUrl: reqSheetUrl } = request.body || {};
 
@@ -371,6 +392,13 @@ export async function googleRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { spreadsheetId: string }; Querystring: { tab?: string } }>(
     "/google/mock-sheet/:spreadsheetId",
     async (request: FastifyRequest<{ Params: { spreadsheetId: string }; Querystring: { tab?: string } }>, reply: FastifyReply) => {
+      if (process.env.NODE_ENV === "production") {
+        return reply.status(403).send({
+          success: false,
+          error: "Forbidden: Mock sheet routes are disabled in production.",
+        });
+      }
+
       const { spreadsheetId } = request.params;
       const { tab } = request.query;
       if (tab) {

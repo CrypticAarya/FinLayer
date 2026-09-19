@@ -1,5 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import prisma from "../db/prisma.js";
+import { AccountingValidationService } from "../services/accounting-validation-service.js";
+import { SyncAuditService } from "../services/sync-audit-service.js";
+import { authenticateConnector } from "../auth/connector-auth.js";
+import { requireCompanyOwnership } from "../auth/tenant-auth.js";
 
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -33,6 +37,9 @@ export interface VoucherEntryInput {
 }
 
 export interface VoucherInput {
+  masterId: number;
+  alterId: number;
+  guid?: string;
   voucherNumber: string;
   voucherType: string;
   date: string;
@@ -43,6 +50,7 @@ export interface VoucherInput {
 
 export interface SyncVouchersBody {
   company: string;
+  syncRunId?: string;
   vouchers: VoucherInput[];
 }
 
@@ -51,6 +59,11 @@ export interface SyncVouchersResponse {
   company: string;
   received: number;
   created: number;
+  updated: number;
+  unchanged: number;
+  failed: number;
+  validationFailed: number;
+  syncRunId?: string;
 }
 
 // ─── Trial Balance Types ──────────────────────────────────────────────────────
@@ -85,14 +98,15 @@ const syncTrialBalanceSchema = {
       company: { type: "string" },
       trialBalance: {
         type: "array",
+        minItems: 1,
         items: {
           type: "object",
           required: ["ledgerName", "groupName", "debitAmount", "creditAmount"],
           properties: {
-            ledgerName: { type: "string" },
+            ledgerName: { type: "string", minLength: 1 },
             groupName: { type: "string" },
-            debitAmount: { type: "number" },
-            creditAmount: { type: "number" },
+            debitAmount: { type: "number", minimum: 0 },
+            creditAmount: { type: "number", minimum: 0 },
           },
         },
       },
@@ -129,12 +143,16 @@ const syncVouchersSchema = {
     required: ["company", "vouchers"],
     properties: {
       company: { type: "string" },
+      syncRunId: { type: "string" },
       vouchers: {
         type: "array",
         items: {
           type: "object",
-          required: ["voucherNumber", "voucherType", "date", "amount", "entries"],
+          required: ["masterId", "alterId", "voucherNumber", "voucherType", "date", "amount", "entries"],
           properties: {
+            masterId: { type: "number" },
+            alterId: { type: "number" },
+            guid: { type: "string" },
             voucherNumber: { type: "string" },
             voucherType: { type: "string" },
             date: { type: "string" },
@@ -167,20 +185,24 @@ async function handleSyncLedgers(
 ): Promise<SyncLedgersResponse> {
   const { company: tallyCompanyName, ledgers } = request.body;
 
+  // ── 1. Derive Company Identity strictly from Authenticated Connector ─────
+  const companyId = request.connector?.companyId;
+  let company = request.connector?.company;
+  if (!company && companyId) {
+    company = await prisma.company.findUnique({ where: { id: companyId } });
+  }
+
+  if (!company) {
+    return reply.status(403).send({
+      success: false,
+      error: "Forbidden: Connector is not associated with an active company.",
+    } as never);
+  }
+
   request.log.info(
-    { company: tallyCompanyName, count: ledgers.length },
+    { companyId: company.id, company: company.tallyCompanyName ?? tallyCompanyName, count: ledgers.length },
     "Received ledger sync payload"
   );
-
-  // ── 1. Find or create Company ─────────────────────────────────────────────
-  const company = await prisma.company.upsert({
-    where: { tallyCompanyName },
-    update: { updatedAt: new Date() },
-    create: {
-      name: tallyCompanyName,
-      tallyCompanyName,
-    },
-  });
 
   // ── 2. Upsert ledgers (keyed by companyId + masterId) ─────────────────────
   let created = 0;
@@ -257,89 +279,245 @@ async function handleSyncVouchers(
   request: FastifyRequest<{ Body: SyncVouchersBody }>,
   reply: FastifyReply
 ): Promise<SyncVouchersResponse> {
-  const { company: tallyCompanyName, vouchers } = request.body;
+  const { company: tallyCompanyName, vouchers, syncRunId } = request.body;
 
-  request.log.info(
-    { company: tallyCompanyName, count: vouchers.length },
-    "Received voucher sync payload"
-  );
-
-  // ── 1. Resolve Company ────────────────────────────────────────────────────
-  const company = await prisma.company.findUnique({
-    where: { tallyCompanyName },
-  });
+  // ── 1. Derive Company Identity strictly from Authenticated Connector ─────
+  const companyId = request.connector?.companyId;
+  let company = request.connector?.company;
+  if (!company && companyId) {
+    company = await prisma.company.findUnique({ where: { id: companyId } });
+  }
 
   if (!company) {
-    return reply.status(404).send({
+    return reply.status(403).send({
       success: false,
-      error: `Company "${tallyCompanyName}" not found. Sync ledgers first.`,
+      error: "Forbidden: Connector is not associated with an active company.",
     } as never);
   }
 
-  // ── 2. Create Vouchers + VoucherEntries ───────────────────────────────────
-  let created = 0;
-
-  for (const v of vouchers) {
-    // Resolve all ledger names up-front so we can fail fast per voucher
-    const resolvedEntries: { ledgerId: string; amount: number; type: string }[] = [];
-
-    for (const entry of v.entries) {
-      const ledger = await prisma.ledger.findFirst({
-        where: { companyId: company.id, name: entry.ledgerName },
-      });
-
-      if (!ledger) {
-        return reply.status(422).send({
-          success: false,
-          error: `Ledger "${entry.ledgerName}" not found for company "${tallyCompanyName}". Sync ledgers first.`,
-          voucher: v.voucherNumber,
-        } as never);
-      }
-
-      resolvedEntries.push({
-        ledgerId: ledger.id,
-        amount: entry.amount,
-        type: entry.type,
-      });
-    }
-
-    // Persist Voucher + its entries atomically
-    await prisma.$transaction(async (tx) => {
-      const voucher = await tx.voucher.create({
-        data: {
-          companyId: company.id,
-          voucherNumber: v.voucherNumber,
-          voucherType: v.voucherType,
-          date: new Date(v.date),
-          partyName: v.partyName ?? null,
-          amount: v.amount,
-        },
-      });
-
-      await tx.voucherEntry.createMany({
-        data: resolvedEntries.map((e) => ({
-          voucherId: voucher.id,
-          ledgerId: e.ledgerId,
-          amount: e.amount,
-          type: e.type,
-        })),
-      });
-    });
-
-    created++;
-  }
-
   request.log.info(
-    { company: tallyCompanyName, received: vouchers.length, created },
-    "Voucher sync persisted"
+    { companyId: company.id, company: company.tallyCompanyName ?? tallyCompanyName, count: vouchers.length, syncRunId },
+    "Received voucher sync payload"
   );
 
-  return reply.status(200).send({
-    success: true,
-    company: tallyCompanyName,
-    received: vouchers.length,
-    created,
+  // ── 0. Initialize SyncRun & Audit Trail (Stage: SYNC_STARTED) ─────────────
+  const activeSyncRunId = await SyncAuditService.startSyncRun({
+    companyId: company.id,
+    syncRunId,
+    recordsFetched: vouchers.length,
   });
+
+  try {
+    // ── 2. Ledger & Voucher Lookup Optimization (O(1) in-memory lookup) ─────
+    const companyLedgers = await prisma.ledger.findMany({
+      where: { companyId: company.id },
+      select: { id: true, name: true },
+    });
+
+    const ledgerMap = new Map<string, string>();
+    for (const l of companyLedgers) {
+      ledgerMap.set(l.name.toLowerCase().trim(), l.id);
+    }
+
+    // Pre-fetch existing vouchers for this batch by masterId to eliminate N queries
+    const masterIds = vouchers.map((v) => v.masterId);
+    const existingVouchers = await prisma.voucher.findMany({
+      where: {
+        companyId: company.id,
+        masterId: { in: masterIds },
+      },
+    });
+    const existingByMasterId = new Map<number, (typeof existingVouchers)[0]>();
+    for (const ev of existingVouchers) {
+      existingByMasterId.set(ev.masterId, ev);
+    }
+
+    // ── 3. Record Stages & Idempotent Processing ────────────────────────────
+    await SyncAuditService.recordStage(
+      activeSyncRunId,
+      "SYNC_VALIDATING",
+      `Validating double-entry balance and ledger mappings for ${vouchers.length} vouchers.`
+    );
+
+    let created = 0;
+    let updated = 0;
+    let unchanged = 0;
+    let failed = 0;
+    let validationFailed = 0;
+
+    await SyncAuditService.recordStage(
+      activeSyncRunId,
+      "SYNC_PROCESSING",
+      `Executing idempotent transaction pipeline for company "${tallyCompanyName}".`
+    );
+
+    for (const v of vouchers) {
+      try {
+        // 1. Accounting & Financial Integrity Validation
+        const validation = AccountingValidationService.validateVoucher(v, ledgerMap);
+
+        if (!validation.isValid) {
+          validationFailed++;
+          failed++;
+
+          console.log(
+            `[ACCOUNTING VALIDATION]\nCompany: "${tallyCompanyName}"\nVoucher: "${v.voucherNumber}"\nDebit: ${validation.debitTotal.toFixed(2)}\nCredit: ${validation.creditTotal.toFixed(2)}\nStatus: REJECTED (${validation.error})`
+          );
+
+          request.log.warn(
+            {
+              company: tallyCompanyName,
+              voucherNumber: v.voucherNumber,
+              masterId: v.masterId,
+              debit: validation.debitTotal,
+              credit: validation.creditTotal,
+              error: validation.error,
+            },
+            "Accounting validation rejected voucher"
+          );
+          continue;
+        }
+
+        console.log(
+          `[ACCOUNTING VALIDATION]\nCompany: "${tallyCompanyName}"\nVoucher: "${v.voucherNumber}"\nDebit: ${validation.debitTotal.toFixed(2)}\nCredit: ${validation.creditTotal.toFixed(2)}\nStatus: PASSED`
+        );
+
+        const resolvedEntries = validation.resolvedEntries!;
+
+        // Lookup existing voucher by Primary: (companyId, masterId), Secondary: guid
+        let existing: (typeof existingVouchers)[0] | null = existingByMasterId.get(v.masterId) ?? null;
+
+        if (!existing && v.guid) {
+          existing = await prisma.voucher.findFirst({
+            where: {
+              companyId: company.id,
+              guid: v.guid,
+            },
+          });
+        }
+
+        // Case 1: Voucher does not exist -> Create atomically
+        if (!existing) {
+          await prisma.$transaction(async (tx) => {
+            const voucher = await tx.voucher.create({
+              data: {
+                companyId: company.id,
+                masterId: v.masterId,
+                alterId: v.alterId,
+                guid: v.guid ?? null,
+                syncRunId: activeSyncRunId,
+                voucherNumber: v.voucherNumber,
+                voucherType: v.voucherType,
+                date: new Date(v.date),
+                partyName: v.partyName ?? null,
+                amount: v.amount,
+              },
+            });
+
+            await tx.voucherEntry.createMany({
+              data: resolvedEntries.map((e) => ({
+                voucherId: voucher.id,
+                ledgerId: e.ledgerId,
+                amount: e.amount,
+                type: e.type,
+              })),
+            });
+
+            existingByMasterId.set(v.masterId, voucher);
+          });
+          created++;
+        }
+        // Case 2: Voucher exists and alterId is unchanged -> Skip processing (no-op)
+        else if (existing.alterId === v.alterId) {
+          unchanged++;
+        }
+        // Case 3: Voucher exists and alterId changed -> Atomic update and entry replacement
+        else {
+          await prisma.$transaction(async (tx) => {
+            const updatedVoucher = await tx.voucher.update({
+              where: { id: existing!.id },
+              data: {
+                alterId: v.alterId,
+                guid: v.guid ?? existing!.guid,
+                syncRunId: activeSyncRunId,
+                voucherNumber: v.voucherNumber,
+                voucherType: v.voucherType,
+                date: new Date(v.date),
+                partyName: v.partyName ?? null,
+                amount: v.amount,
+              },
+            });
+
+            await tx.voucherEntry.deleteMany({
+              where: { voucherId: existing!.id },
+            });
+
+            await tx.voucherEntry.createMany({
+              data: resolvedEntries.map((e) => ({
+                voucherId: existing!.id,
+                ledgerId: e.ledgerId,
+                amount: e.amount,
+                type: e.type,
+              })),
+            });
+
+            existingByMasterId.set(v.masterId, updatedVoucher);
+          });
+          updated++;
+        }
+      } catch (err) {
+        request.log.error(
+          { err, voucherNumber: v.voucherNumber, masterId: v.masterId },
+          "Error processing voucher in sync batch"
+        );
+        failed++;
+      }
+    }
+
+    // ── 4. Complete SyncRun & Audit Trail (Stage: SYNC_COMPLETED) ───────────
+    await SyncAuditService.completeSyncRun({
+      syncRunId: activeSyncRunId,
+      recordsCreated: created,
+      recordsUpdated: updated,
+      recordsFailed: failed,
+      errorSummary:
+        validationFailed > 0 ? `${validationFailed} vouchers failed accounting validation.` : undefined,
+    });
+
+    // ── 5. Structured Logging ───────────────────────────────────────────────
+    console.log(
+      `[SYNC]\nCompany: "${tallyCompanyName}"\nSync Run: "${activeSyncRunId}"\nReceived: ${vouchers.length}\nCreated: ${created}\nUpdated: ${updated}\nSkipped: ${unchanged}\nFailed: ${failed}\nValidation Failed: ${validationFailed}`
+    );
+
+    request.log.info(
+      {
+        company: tallyCompanyName,
+        received: vouchers.length,
+        created,
+        updated,
+        unchanged,
+        failed,
+        validationFailed,
+        syncRunId: activeSyncRunId,
+      },
+      "Voucher sync completed"
+    );
+
+    return reply.status(200).send({
+      success: true,
+      company: tallyCompanyName,
+      received: vouchers.length,
+      created,
+      updated,
+      unchanged,
+      failed,
+      validationFailed,
+      syncRunId: activeSyncRunId,
+    });
+  } catch (err: any) {
+    await SyncAuditService.failSyncRun(activeSyncRunId, err?.message || "Internal sync error");
+    throw err;
+  }
 }
 
 // ─── Route Handler: /sync/trial-balance ──────────────────────────────────────
@@ -350,74 +528,105 @@ async function handleSyncTrialBalance(
 ): Promise<SyncTrialBalanceResponse> {
   const { company: tallyCompanyName, trialBalance } = request.body;
 
-  request.log.info(
-    { company: tallyCompanyName, count: trialBalance.length },
-    "Received trial balance sync payload"
-  );
+  // ── 1. Derive Company Identity strictly from Authenticated Connector ─────
+  const companyId = request.connector?.companyId;
+  let company = request.connector?.company;
+  if (!company && companyId) {
+    company = await prisma.company.findUnique({ where: { id: companyId } });
+  }
 
-  // 1. Find or create Company
-  const company = await prisma.company.upsert({
-    where: { tallyCompanyName },
-    update: { updatedAt: new Date() },
-    create: {
-      name: tallyCompanyName,
-      tallyCompanyName,
-    },
-  });
-
-  // 2. Upsert trial balance entries (keyed by companyId + ledgerName)
-  let created = 0;
-  let updated = 0;
-
-  for (const item of trialBalance) {
-    const existing = await prisma.trialBalanceEntry.findUnique({
-      where: {
-        companyId_ledgerName: {
-          companyId: company.id,
-          ledgerName: item.ledgerName,
-        },
-      },
-    });
-
-    if (!existing) {
-      await prisma.trialBalanceEntry.create({
-        data: {
-          companyId: company.id,
-          ledgerName: item.ledgerName,
-          groupName: item.groupName,
-          debitAmount: item.debitAmount,
-          creditAmount: item.creditAmount,
-        },
-      });
-      created++;
-    } else {
-      await prisma.trialBalanceEntry.update({
-        where: { id: existing.id },
-        data: {
-          groupName: item.groupName,
-          debitAmount: item.debitAmount,
-          creditAmount: item.creditAmount,
-        },
-      });
-      updated++;
-    }
+  if (!company) {
+    return reply.status(403).send({
+      success: false,
+      error: "Forbidden: Connector is not associated with an active company.",
+    } as never);
   }
 
   request.log.info(
-    { company: tallyCompanyName, received: trialBalance.length, created, updated },
+    { companyId: company.id, company: company.tallyCompanyName ?? tallyCompanyName, count: trialBalance.length },
+    "Received trial balance sync payload"
+  );
+
+  // ── 2. Validate non-empty payload & duplicate ledger names ──────────────────
+  if (!Array.isArray(trialBalance) || trialBalance.length === 0) {
+    return reply.status(400).send({
+      success: false,
+      error: "Bad Request: trialBalance payload must be a non-empty array.",
+    } as never);
+  }
+
+  const seenLedgers = new Set<string>();
+  for (const item of trialBalance) {
+    if (!item.ledgerName || typeof item.ledgerName !== "string" || item.ledgerName.trim().length === 0) {
+      return reply.status(400).send({
+        success: false,
+        error: "Bad Request: Each trial balance entry must have a non-empty ledgerName.",
+      } as never);
+    }
+    const normalizedName = item.ledgerName.trim();
+    if (seenLedgers.has(normalizedName)) {
+      return reply.status(400).send({
+        success: false,
+        error: `Bad Request: Duplicate ledgerName "${item.ledgerName}" in trial balance payload.`,
+      } as never);
+    }
+    seenLedgers.add(normalizedName);
+
+    if (typeof item.groupName !== "string") {
+      return reply.status(400).send({
+        success: false,
+        error: `Bad Request: Invalid groupName for ledger "${item.ledgerName}".`,
+      } as never);
+    }
+
+    if (typeof item.debitAmount !== "number" || isNaN(item.debitAmount) || !isFinite(item.debitAmount) || item.debitAmount < 0) {
+      return reply.status(400).send({
+        success: false,
+        error: `Bad Request: Invalid debitAmount for ledger "${item.ledgerName}".`,
+      } as never);
+    }
+    if (typeof item.creditAmount !== "number" || isNaN(item.creditAmount) || !isFinite(item.creditAmount) || item.creditAmount < 0) {
+      return reply.status(400).send({
+        success: false,
+        error: `Bad Request: Invalid creditAmount for ledger "${item.ledgerName}".`,
+      } as never);
+    }
+  }
+
+  // ── 3. Atomically replace company's Trial Balance entries in a transaction ──
+  await prisma.$transaction(async (tx) => {
+    // a. Delete existing entries belonging strictly to this company
+    await tx.trialBalanceEntry.deleteMany({
+      where: { companyId: company.id },
+    });
+
+    // b. Insert complete incoming snapshot using tx
+    await tx.trialBalanceEntry.createMany({
+      data: trialBalance.map((item) => ({
+        companyId: company.id,
+        ledgerName: item.ledgerName.trim(),
+        groupName: item.groupName.trim() || "Primary",
+        debitAmount: item.debitAmount,
+        creditAmount: item.creditAmount,
+      })),
+    });
+  });
+
+  request.log.info(
+    { company: tallyCompanyName, received: trialBalance.length, created: trialBalance.length, updated: 0 },
     "Trial balance sync persisted"
   );
 
   console.log(
-    `[API POST /sync/trial-balance] Company: "${tallyCompanyName}" | Received: ${trialBalance.length} | Created: ${created} | Updated: ${updated}`
+    `[API POST /sync/trial-balance] Company: "${tallyCompanyName}" | Received: ${trialBalance.length} | Created: ${trialBalance.length} | Updated: 0`
   );
 
   return reply.status(200).send({
     success: true,
     company: tallyCompanyName,
     received: trialBalance.length,
-    created,
-    updated,
+    created: trialBalance.length,
+    updated: 0,
   });
 }
 
@@ -426,19 +635,28 @@ async function handleSyncTrialBalance(
 export async function syncRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: SyncLedgersBody }>(
     "/sync/ledgers",
-    { schema: syncLedgersSchema },
+    {
+      schema: syncLedgersSchema,
+      preHandler: [authenticateConnector, requireCompanyOwnership()],
+    },
     handleSyncLedgers
   );
 
   app.post<{ Body: SyncVouchersBody }>(
     "/sync/vouchers",
-    { schema: syncVouchersSchema },
+    {
+      schema: syncVouchersSchema,
+      preHandler: [authenticateConnector, requireCompanyOwnership()],
+    },
     handleSyncVouchers
   );
 
   app.post<{ Body: SyncTrialBalanceBody }>(
     "/sync/trial-balance",
-    { schema: syncTrialBalanceSchema },
+    {
+      schema: syncTrialBalanceSchema,
+      preHandler: [authenticateConnector, requireCompanyOwnership()],
+    },
     handleSyncTrialBalance
   );
 }

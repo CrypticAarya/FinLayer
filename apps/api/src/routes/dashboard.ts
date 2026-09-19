@@ -4,20 +4,48 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { calculateFinancialSummary } from "../services/financial-summary-service.js";
+import {
+  authenticateUserOrConnector,
+  requireTenantCompanyAccess,
+} from "../auth/tenant-auth.js";
+import { generateUserToken, hashUserToken, optionalAuthenticateUser } from "../auth/user-auth.js";
 
 // ─── GET /dashboard ───────────────────────────────────────────────────────────
 // Serves the dashboard HTML shell (redirect to static file below).
 
 // ─── GET /dashboard/data ──────────────────────────────────────────────────────
-// Returns live data needed by the dashboard without requiring an API key.
-// Intentionally internal-only — never expose on a public network.
+// Returns scoped live data needed by the dashboard for the authenticated entity.
+// Rejects unauthenticated callers with 401.
 
 async function handleDashboardData(
-  _request: FastifyRequest,
+  request: FastifyRequest,
   reply: FastifyReply
 ): Promise<void> {
-  // 1. All companies with their latest connector
+  const user = request.user;
+  const connector = request.connector;
+
+  // Determine authorized company scope
+  let allowedCompanyIds: string[] | undefined;
+
+  if (user) {
+    if (user.role !== "SUPER_ADMIN") {
+      allowedCompanyIds = (request.userMemberships ?? []).map((m) => m.companyId);
+    }
+  } else if (connector) {
+    allowedCompanyIds = connector.companyId ? [connector.companyId] : [];
+  } else {
+    return reply.status(401).send({
+      success: false,
+      error: "Unauthorized: Missing authentication credentials.",
+    });
+  }
+
+  const companyWhere = allowedCompanyIds ? { id: { in: allowedCompanyIds } } : {};
+  const jobWhere = allowedCompanyIds ? { connector: { companyId: { in: allowedCompanyIds } } } : {};
+
+  // 1. Authorized companies with their latest connector
   const companies = await prisma.company.findMany({
+    where: companyWhere,
     include: {
       connectors: {
         orderBy: { lastHeartbeat: "desc" },
@@ -40,8 +68,9 @@ async function handleDashboardData(
     orderBy: { createdAt: "asc" },
   });
 
-  // 2. Recent sync jobs (last 20)
+  // 2. Recent sync jobs for authorized companies (last 20)
   const recentJobs = await prisma.syncJob.findMany({
+    where: jobWhere,
     orderBy: { createdAt: "desc" },
     take: 20,
     include: {
@@ -125,8 +154,18 @@ async function handleLedgersData(
   reply: FastifyReply
 ): Promise<void> {
   const { companyId } = request.query as { companyId?: string };
+  const user = request.user;
+  const connector = request.connector;
+
+  let allowedCompanyIds: string[] | undefined;
+  if (user && user.role !== "SUPER_ADMIN") {
+    allowedCompanyIds = (request.userMemberships ?? []).map((m) => m.companyId);
+  } else if (connector) {
+    allowedCompanyIds = connector.companyId ? [connector.companyId] : [];
+  }
 
   const companies = await prisma.company.findMany({
+    where: allowedCompanyIds ? { id: { in: allowedCompanyIds } } : {},
     select: { id: true, name: true, tallyCompanyName: true },
     orderBy: { createdAt: "asc" },
   });
@@ -164,8 +203,18 @@ async function handleVouchersData(
   reply: FastifyReply
 ): Promise<void> {
   const { companyId } = request.query as { companyId?: string };
+  const user = request.user;
+  const connector = request.connector;
+
+  let allowedCompanyIds: string[] | undefined;
+  if (user && user.role !== "SUPER_ADMIN") {
+    allowedCompanyIds = (request.userMemberships ?? []).map((m) => m.companyId);
+  } else if (connector) {
+    allowedCompanyIds = connector.companyId ? [connector.companyId] : [];
+  }
 
   const companies = await prisma.company.findMany({
+    where: allowedCompanyIds ? { id: { in: allowedCompanyIds } } : {},
     select: { id: true, name: true, tallyCompanyName: true },
     orderBy: { createdAt: "asc" },
   });
@@ -194,11 +243,11 @@ async function handleVouchersData(
       voucherType: v.voucherType,
       date: v.date.toISOString(),
       partyName: v.partyName ?? null,
-      amount: v.amount,
+      amount: Number(v.amount),
       entryCount: v.voucherEntries.length,
       entries: v.voucherEntries.map((e) => ({
         ledgerName: e.ledger.name,
-        amount: e.amount,
+        amount: Number(e.amount),
         type: e.type,
       })),
     })),
@@ -212,8 +261,18 @@ async function handleTrialBalanceData(
   reply: FastifyReply
 ): Promise<void> {
   const { companyId } = request.query as { companyId?: string };
+  const user = request.user;
+  const connector = request.connector;
+
+  let allowedCompanyIds: string[] | undefined;
+  if (user && user.role !== "SUPER_ADMIN") {
+    allowedCompanyIds = (request.userMemberships ?? []).map((m) => m.companyId);
+  } else if (connector) {
+    allowedCompanyIds = connector.companyId ? [connector.companyId] : [];
+  }
 
   const companies = await prisma.company.findMany({
+    where: allowedCompanyIds ? { id: { in: allowedCompanyIds } } : {},
     select: { id: true, name: true, tallyCompanyName: true },
     orderBy: { createdAt: "asc" },
   });
@@ -276,17 +335,48 @@ async function handleProvision(
     return reply.status(400).send({ success: false, error: "companyName, tallyUrl, and apiUrl are required." });
   }
 
-  // Upsert company so re-running setup is idempotent
-  const company = await prisma.company.upsert({
-    where: { tallyCompanyName: companyName.trim() },
-    update: { name: companyName.trim() },
-    create: { name: companyName.trim(), tallyCompanyName: companyName.trim() },
+  const cleanName = companyName.trim();
+
+  // 1. Anti-Hijacking Security Check: Never allow provisioning an existing company
+  const existingCompany = await prisma.company.findFirst({
+    where: {
+      OR: [
+        { tallyCompanyName: cleanName },
+        { name: cleanName },
+      ],
+    },
   });
+
+  if (existingCompany) {
+    return reply.status(403).send({
+      success: false,
+      error: "Forbidden: Company already exists. Cannot provision an existing company.",
+    });
+  }
+
+  // 2. Safe creation flow (atomic create)
+  const company = await prisma.company.create({
+    data: {
+      name: cleanName,
+      tallyCompanyName: cleanName,
+    },
+  });
+
+  // 3. If request is made by an authenticated user, bind the user as OWNER
+  if (request.user) {
+    await prisma.companyMember.create({
+      data: {
+        userId: request.user.id,
+        companyId: company.id,
+        role: "OWNER",
+      },
+    });
+  }
 
   const connectorConfig = {
     apiUrl: apiUrl.trim(),
     tallyUrl: tallyUrl.trim(),
-    companyName: companyName.trim(),
+    companyName: cleanName,
     connectorName: connectorName?.trim() || "FinLayer Connector",
   };
 
@@ -299,7 +389,7 @@ async function handleProvision(
 }
 
 // ─── POST /dashboard/sync ─────────────────────────────────────────────────────
-// Trigger a sync job directly by companyId — bypasses SaaS auth for demo use.
+// Trigger a sync job directly by companyId — requires tenant company access.
 
 interface TriggerSyncBody {
   companyId: string;
@@ -335,8 +425,6 @@ async function handleDashboardSync(
 
   return reply.status(200).send({ success: true, jobId: job.id, status: job.status });
 }
-
-// ─── Plugin ───────────────────────────────────────────────────────────────────
 
 // ─── GET /dashboard/financial-summary/:companyId ──────────────────────────────
 async function handleFinancialSummary(
@@ -392,6 +480,98 @@ async function handleSyncHistory(
   });
 }
 
+// ─── POST /auth/session ───────────────────────────────────────────────────────
+// Internal testing & dev session bootstrap endpoint (NOT final production SaaS user authentication).
+// In production, strictly restricted by x-admin-key to prevent unauthorized session generation.
+interface CreateSessionBody {
+  email: string;
+  name?: string;
+  companyId?: string;
+  role?: string;
+}
+
+async function handleCreateSession(
+  request: FastifyRequest<{ Body: CreateSessionBody }>,
+  reply: FastifyReply
+): Promise<void> {
+  // Enforce admin-key in production for this internal testing bootstrap endpoint
+  if (process.env.NODE_ENV === "production") {
+    const adminKey = request.headers["x-admin-key"];
+    const expectedKey = process.env.ADMIN_API_KEY;
+    if (!expectedKey || adminKey !== expectedKey) {
+      return reply.status(401).send({
+        success: false,
+        error: "Unauthorized: Internal test session endpoint requires valid x-admin-key in production.",
+      });
+    }
+  }
+
+  const { email, name, companyId, role } = request.body || {};
+
+  if (!email || !email.trim()) {
+    return reply.status(400).send({ success: false, error: "email is required." });
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  const userName = name?.trim() || cleanEmail.split("@")[0] || "User";
+
+  // Upsert user
+  const user = await prisma.user.upsert({
+    where: { email: cleanEmail },
+    update: { name: userName },
+    create: {
+      email: cleanEmail,
+      name: userName,
+      role: role === "SUPER_ADMIN" ? "SUPER_ADMIN" : "USER",
+    },
+  });
+
+  // If companyId is provided, grant membership
+  if (companyId) {
+    const company = await prisma.company.findUnique({ where: { id: companyId } });
+    if (company) {
+      await prisma.companyMember.upsert({
+        where: {
+          userId_companyId: {
+            userId: user.id,
+            companyId: company.id,
+          },
+        },
+        update: {},
+        create: {
+          userId: user.id,
+          companyId: company.id,
+          role: "OWNER",
+        },
+      });
+    }
+  }
+
+  // Generate session token
+  const token = generateUserToken();
+  const tokenHash = hashUserToken(token);
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+
+  await prisma.userSession.create({
+    data: {
+      userId: user.id,
+      tokenHash,
+      expiresAt,
+    },
+  });
+
+  return reply.status(200).send({
+    success: true,
+    token,
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+    },
+  });
+}
+
 function serveHtml(name: string) {
   return async (_req: FastifyRequest, reply: FastifyReply) => {
     const htmlPath = resolve(dirname(fileURLToPath(import.meta.url)), `../../public/${name}`);
@@ -411,13 +591,62 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
   app.get("/setup/tally",             serveHtml("setup-tally.html"));
   app.get("/setup/google",            serveHtml("setup-google.html"));
 
-  // ── Data endpoints ──
-  app.get("/dashboard/data",                          handleDashboardData);
-  app.get("/dashboard/data/ledgers",                  handleLedgersData);
-  app.get("/dashboard/data/vouchers",                 handleVouchersData);
-  app.get("/dashboard/data/trial-balance",            handleTrialBalanceData);
-  app.get("/dashboard/financial-summary/:companyId",  handleFinancialSummary);
-  app.get("/dashboard/sync-history/:companyId",       handleSyncHistory);
+  // ── Session Auth Endpoint ──
+  app.post<{ Body: CreateSessionBody }>(
+    "/auth/session",
+    {
+      schema: {
+        body: {
+          type: "object",
+          required: ["email"],
+          properties: {
+            email: { type: "string" },
+            name: { type: "string" },
+            companyId: { type: "string" },
+            role: { type: "string" },
+          },
+        },
+      },
+    },
+    handleCreateSession
+  );
+
+  // ── Data endpoints (Secured with Zero Fail-Open Authentication) ──
+  app.get(
+    "/dashboard/data",
+    { preHandler: [authenticateUserOrConnector] },
+    handleDashboardData
+  );
+
+  app.get<{ Querystring: { companyId?: string } }>(
+    "/dashboard/data/ledgers",
+    { preHandler: [authenticateUserOrConnector, requireTenantCompanyAccess()] },
+    handleLedgersData
+  );
+
+  app.get<{ Querystring: { companyId?: string } }>(
+    "/dashboard/data/vouchers",
+    { preHandler: [authenticateUserOrConnector, requireTenantCompanyAccess()] },
+    handleVouchersData
+  );
+
+  app.get<{ Querystring: { companyId?: string } }>(
+    "/dashboard/data/trial-balance",
+    { preHandler: [authenticateUserOrConnector, requireTenantCompanyAccess()] },
+    handleTrialBalanceData
+  );
+
+  app.get<{ Params: { companyId: string } }>(
+    "/dashboard/financial-summary/:companyId",
+    { preHandler: [authenticateUserOrConnector, requireTenantCompanyAccess()] },
+    handleFinancialSummary
+  );
+
+  app.get<{ Params: { companyId: string } }>(
+    "/dashboard/sync-history/:companyId",
+    { preHandler: [authenticateUserOrConnector, requireTenantCompanyAccess()] },
+    handleSyncHistory
+  );
 
   // ── Actions ──
   app.post<{ Body: TriggerSyncBody }>(
@@ -433,6 +662,7 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
           },
         },
       },
+      preHandler: [authenticateUserOrConnector, requireTenantCompanyAccess()],
     },
     handleDashboardSync
   );
@@ -452,6 +682,7 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
           },
         },
       },
+      preHandler: [optionalAuthenticateUser],
     },
     handleProvision
   );

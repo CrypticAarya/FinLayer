@@ -84,6 +84,27 @@ export function parseVouchers(xml: string): Voucher[] {
       continue;
     }
 
+    const rawMasterId = extractValue(v.MASTERID);
+    if (rawMasterId == null || rawMasterId === "" || isNaN(Number(rawMasterId))) {
+      console.warn(
+        `[Parser] Skipping malformed voucher: missing or invalid MASTERID (${rawMasterId}) for voucher "${voucherNumber}"`
+      );
+      continue;
+    }
+    const masterId = Number(rawMasterId);
+
+    const rawAlterId = extractValue(v.ALTERID);
+    if (rawAlterId == null || rawAlterId === "" || isNaN(Number(rawAlterId))) {
+      console.warn(
+        `[Parser] Skipping malformed voucher: missing or invalid ALTERID (${rawAlterId}) for voucher "${voucherNumber}"`
+      );
+      continue;
+    }
+    const alterId = Number(rawAlterId);
+
+    const rawGuid = extractValue(v.GUID);
+    const guid = rawGuid != null && String(rawGuid).trim().length > 0 ? String(rawGuid).trim() : undefined;
+
     // Ledger entries can be in ALLLEDGERENTRIES.LIST or LEDGERENTRIES.LIST
     const rawEntriesContainer =
       v["ALLLEDGERENTRIES.LIST"] ?? v["LEDGERENTRIES.LIST"] ?? [];
@@ -148,6 +169,9 @@ export function parseVouchers(xml: string): Voucher[] {
     const voucherAmount = debitTotal > 0 ? debitTotal : creditTotal;
 
     parsedVouchers.push({
+      masterId,
+      alterId,
+      ...(guid ? { guid } : {}),
       voucherNumber,
       voucherType,
       date: formattedDate,

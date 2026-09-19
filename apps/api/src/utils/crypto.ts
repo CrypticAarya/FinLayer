@@ -8,6 +8,9 @@ const TAG_LENGTH = 16;
  * Derives a consistent 32-byte key from the configured secret.
  */
 function getEncryptionKey(): Buffer {
+  if (process.env.NODE_ENV === "production" && !process.env.ENCRYPTION_SECRET) {
+    throw new Error("FATAL: ENCRYPTION_SECRET environment variable must be set in production.");
+  }
   const secret = process.env.ENCRYPTION_SECRET || "finlayer-secret-encryption-key-32b";
   return crypto.scryptSync(secret, "finlayer-salt-v1", 32);
 }

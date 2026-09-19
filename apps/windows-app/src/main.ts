@@ -1,10 +1,13 @@
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell, safeStorage } from "electron";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import crypto from "node:crypto";
 import { autoUpdater } from "electron-updater";
+
+// Ensure app name is explicitly FinLayer so userData path is consistently %APPDATA%/FinLayer
+app.setName("FinLayer");
 
 // Reuse existing connector services and types
 import {
@@ -16,6 +19,7 @@ import {
 } from "../../connector/src/tally/company-service.js";
 import {
   registerConnectorWithApi,
+  upgradeV1ConnectorToken,
   selectCompanyForConnector,
   sendHeartbeatToApi,
   reportTallyConnected,
@@ -25,6 +29,7 @@ import {
 import { startJobWorker, type JobWorkerHandle } from "../../connector/src/jobs/job-worker.js";
 import { config as connectorConfig } from "../../connector/src/config.js";
 import type { ConnectorState } from "../../connector/src/state/state-store.js";
+import { type ITokenStorage, TokenStorageManager } from "../../connector/src/state/token-storage.js";
 
 // ─── Internal API Configuration Resolution ─────────────────────────────────────
 // Staging default: http://192.168.88.25:4000
@@ -130,6 +135,21 @@ function resolveInitialApiUrl(): string {
           return normalizeUrl(envVars.FINLAYER_API_URL);
         }
       }
+    }
+  }
+
+  // Check connector-state.json across userData / AppData dirs
+  const appDataBase = process.env.APPDATA || (process.platform === "darwin" ? path.join(os.homedir(), "Library", "Application Support") : path.join(os.homedir(), ".config"));
+  const stateDirs = [...searchDirs, path.join(appDataBase, "FinLayer"), path.join(appDataBase, "finlayer-windows-app")];
+  for (const dir of stateDirs) {
+    const p = path.join(dir, "connector-state.json");
+    if (existsSync(p)) {
+      try {
+        const content = JSON.parse(readFileSync(p, "utf-8"));
+        if (content.apiUrl && typeof content.apiUrl === "string") {
+          return normalizeUrl(content.apiUrl);
+        }
+      } catch {}
     }
   }
 
@@ -251,6 +271,53 @@ function getUpdateStateFilePath(): string {
   return path.join(getUserDataDir(), "update-state.json");
 }
 
+function getCandidateStateFilePaths(): string[] {
+  const base = process.env.APPDATA || (
+    process.platform === "darwin"
+      ? path.join(os.homedir(), "Library", "Application Support")
+      : path.join(os.homedir(), ".config")
+  );
+  const paths: string[] = [];
+
+  // 1. Canonical userData path
+  paths.push(getStateFilePath());
+
+  // 2. Explicit AppData FinLayer path
+  paths.push(path.join(base, "FinLayer", "connector-state.json"));
+
+  // 3. Explicit AppData finlayer-windows-app path (legacy / dev fallback)
+  paths.push(path.join(base, "finlayer-windows-app", "connector-state.json"));
+
+  // 4. Custom env override if provided
+  if (process.env.FINLAYER_STATE_PATH) {
+    paths.push(process.env.FINLAYER_STATE_PATH);
+  }
+
+  // 5. CWD fallback
+  paths.push(path.join(process.cwd(), "connector-state.json"));
+
+  return Array.from(new Set(paths));
+}
+
+const CURRENT_SCHEMA_VERSION = 1;
+
+function migrateConnectorState(state: ConnectorState): ConnectorState {
+  const currentVersion = state.schemaVersion ?? state.migrationVersion ?? 0;
+
+  if (currentVersion < 1) {
+    console.log(`[MIGRATION] Migrating connector state from v${currentVersion} to v1...`);
+    state.schemaVersion = 1;
+    state.migrationVersion = 1;
+    if (!state.apiUrl && typeof API_URL === "string" && API_URL) {
+      state.apiUrl = API_URL;
+    }
+  }
+
+  state.schemaVersion = CURRENT_SCHEMA_VERSION;
+  state.migrationVersion = CURRENT_SCHEMA_VERSION;
+  return state;
+}
+
 let testFlowState: ConnectorState | null = null;
 
 async function loadLocalState(): Promise<ConnectorState> {
@@ -262,6 +329,8 @@ async function loadLocalState(): Promise<ConnectorState> {
       deviceName: "Windows-Test-PC",
       operatingSystem: "Windows 11 / 10",
       setupStatus: "REGISTERED",
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      migrationVersion: CURRENT_SCHEMA_VERSION,
     };
     return testFlowState;
   }
@@ -269,14 +338,38 @@ async function loadLocalState(): Promise<ConnectorState> {
     return testFlowState;
   }
 
-  const filePath = getStateFilePath();
-  try {
-    if (existsSync(filePath)) {
-      const data = await fs.readFile(filePath, "utf-8");
-      return JSON.parse(data) as ConnectorState;
+  const candidatePaths = getCandidateStateFilePaths();
+  for (const filePath of candidatePaths) {
+    try {
+      if (existsSync(filePath)) {
+        const data = await fs.readFile(filePath, "utf-8");
+        let parsed = JSON.parse(data) as ConnectorState;
+        if (parsed && (parsed.deviceId || parsed.connectorId || parsed.companyId || parsed.tallyCompanyName)) {
+          parsed = migrateConnectorState(parsed);
+
+          console.log(`[STATE] Discovered existing state from ${filePath}:`, {
+            deviceId: parsed.deviceId,
+            connectorId: parsed.connectorId,
+            companyId: parsed.companyId,
+            tallyCompanyName: parsed.tallyCompanyName,
+            setupStatus: parsed.setupStatus,
+            schemaVersion: parsed.schemaVersion,
+            migrationVersion: parsed.migrationVersion,
+          });
+
+          // Ensure it is also saved to the primary canonical location
+          const canonicalPath = getStateFilePath();
+          if (path.resolve(filePath) !== path.resolve(canonicalPath)) {
+            console.log(`[STATE] Migrating state from ${filePath} -> ${canonicalPath}`);
+            await saveLocalState(parsed);
+          }
+
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn(`[STATE] Could not read local state candidate ${filePath}:`, e);
     }
-  } catch (e) {
-    console.warn("Could not read local state file:", e);
   }
 
   // First run initial state
@@ -288,8 +381,11 @@ async function loadLocalState(): Promise<ConnectorState> {
     deviceName: os.hostname() || "Windows-PC",
     operatingSystem: "Windows 11 / 10",
     setupStatus: "REGISTERED",
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+    migrationVersion: CURRENT_SCHEMA_VERSION,
   };
 
+  console.log(`[STATE] Initializing new first-run state with deviceId: ${deviceId}`);
   await saveLocalState(initialState);
   return initialState;
 }
@@ -298,14 +394,81 @@ async function saveLocalState(state: ConnectorState): Promise<void> {
   if (process.env.TEST_FLOW === "1") {
     testFlowState = state;
   }
+  if (!state.apiUrl && typeof API_URL === "string" && API_URL) {
+    state.apiUrl = API_URL;
+  }
+  state.schemaVersion = CURRENT_SCHEMA_VERSION;
+  state.migrationVersion = CURRENT_SCHEMA_VERSION;
+
   const filePath = getStateFilePath();
   try {
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, JSON.stringify(state, null, 2), "utf-8");
+    console.log(`[STATE] Saved local state to ${filePath}: connectorId="${state.connectorId}", companyId="${state.companyId}", setupStatus="${state.setupStatus}", schemaVersion=${state.schemaVersion}`);
   } catch (e) {
     console.error("Failed to save local state:", e);
   }
 }
+
+// ─── Native OS Secure Token Storage (Windows DPAPI / Electron safeStorage) ─────
+
+export class ElectronSafeStorageProvider implements ITokenStorage {
+  async getToken(): Promise<string | null> {
+    const state = await loadLocalState();
+    if (!state) return null;
+
+    if (state.encryptedConnectorToken && safeStorage && safeStorage.isEncryptionAvailable()) {
+      try {
+        const buffer = Buffer.from(state.encryptedConnectorToken, "base64");
+        return safeStorage.decryptString(buffer);
+      } catch (err) {
+        console.error("[SafeStorage] Failed to decrypt token via safeStorage:", err);
+      }
+    }
+
+    // Auto-migration: if legacy plaintext token exists, encrypt and wipe plaintext
+    if (state.connectorToken) {
+      const plaintext = state.connectorToken;
+      if (safeStorage && safeStorage.isEncryptionAvailable()) {
+        try {
+          const encrypted = safeStorage.encryptString(plaintext).toString("base64");
+          state.encryptedConnectorToken = encrypted;
+          delete state.connectorToken;
+          await saveLocalState(state);
+          console.log("[SafeStorage] Migrated legacy plaintext token to OS native encrypted storage");
+        } catch (err) {
+          console.error("[SafeStorage] Failed to encrypt legacy token with safeStorage:", err);
+        }
+      }
+      return plaintext;
+    }
+
+    return null;
+  }
+
+  async setToken(token: string): Promise<void> {
+    const state = await loadLocalState();
+    if (safeStorage && safeStorage.isEncryptionAvailable()) {
+      const encrypted = safeStorage.encryptString(token).toString("base64");
+      state.encryptedConnectorToken = encrypted;
+      delete state.connectorToken; // WIPE plaintext
+      console.log("[SafeStorage] Token securely stored via Electron safeStorage (Windows DPAPI)");
+    } else {
+      state.connectorToken = token;
+      console.warn("[SafeStorage] Native encryption unavailable; stored token in fallback state");
+    }
+    await saveLocalState(state);
+  }
+
+  async clearToken(): Promise<void> {
+    const state = await loadLocalState();
+    delete state.connectorToken;
+    delete state.encryptedConnectorToken;
+    await saveLocalState(state);
+  }
+}
+
+const tokenStorage: ITokenStorage = new ElectronSafeStorageProvider();
 
 interface UpdateState {
   lastCheck: string;
@@ -421,9 +584,35 @@ function configureConnector(state?: ConnectorState) {
   }
 }
 
+async function ensureConnectorToken(connectorId: string): Promise<string | null> {
+  const existingToken = await tokenStorage.getToken();
+  if (existingToken) return existingToken;
+
+  const state = await loadLocalState();
+  if (state && state.deviceId) {
+    try {
+      console.log(`[V1 UPGRADE] Upgrading existing connector "${connectorId}" with secure token...`);
+      const upgrade = await upgradeV1ConnectorToken(connectorId, state.deviceId);
+      if (upgrade.token) {
+        await tokenStorage.setToken(upgrade.token);
+        console.log(`[V1 UPGRADE] Secure token provisioned and stored in native storage.`);
+        return upgrade.token;
+      }
+    } catch (err) {
+      console.warn(`[V1 UPGRADE] Failed to upgrade V1 connector token:`, err);
+    }
+  }
+  return null;
+}
+
 function startBackgroundServices(connectorId: string) {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   if (jobWorkerHandle) jobWorkerHandle.stop();
+
+  // Ensure token is provisioned before sending heartbeats
+  ensureConnectorToken(connectorId).then(() => {
+    sendHeartbeatToApi(connectorId, { version: CONNECTOR_VERSION }).catch(() => {});
+  });
 
   // 1. Periodic heartbeat every 30s with connector version
   heartbeatTimer = setInterval(async () => {
@@ -598,14 +787,66 @@ function createWindow(): void {
 // 1. Get Initial App State
 ipcMain.handle("finlayer:get-initial-state", async () => {
   const state = await loadLocalState();
+
+  // If connector is registered but companyId or active status is missing, attempt recovery from API heartbeat
+  if (state.connectorId && (!state.companyId || state.setupStatus !== "ACTIVE")) {
+    try {
+      console.log(`[STATE] Querying API heartbeat to refresh state for connector "${state.connectorId}"...`);
+      const hb = await sendHeartbeatToApi(state.connectorId, { version: CONNECTOR_VERSION });
+      console.log(`[STATE] API heartbeat response:`, hb);
+      let changed = false;
+      if (hb && (hb as any).companyId && !state.companyId) {
+        state.companyId = (hb as any).companyId;
+        changed = true;
+      }
+      if (hb && (hb as any).tallyCompanyName && !state.tallyCompanyName) {
+        state.tallyCompanyName = (hb as any).tallyCompanyName;
+        changed = true;
+      }
+      if (hb && (hb as any).setupStatus === "ACTIVE" && state.setupStatus !== "ACTIVE") {
+        state.setupStatus = "ACTIVE";
+        isSetupActive = true;
+        changed = true;
+      }
+      if (changed) {
+        await saveLocalState(state);
+      }
+    } catch (e) {
+      console.warn("[STATE] Heartbeat state sync check error:", e);
+    }
+  }
+
   if (state.setupStatus === "ACTIVE") {
     isSetupActive = true;
+    if (state.connectorId && !jobWorkerHandle) {
+      startBackgroundServices(state.connectorId);
+    }
   }
   configureConnector(state);
 
+  console.log(`[STATE] finlayer:get-initial-state returning:`, {
+    connectorId: state.connectorId,
+    companyId: state.companyId,
+    tallyCompanyName: state.tallyCompanyName,
+    setupStatus: state.setupStatus,
+  });
+
+  const safeState = {
+    deviceId: state.deviceId,
+    connectorId: state.connectorId,
+    companyId: state.companyId,
+    company: state.company,
+    tallyCompanyName: state.tallyCompanyName,
+    deviceName: state.deviceName,
+    operatingSystem: state.operatingSystem,
+    setupStatus: state.setupStatus,
+    registeredAt: state.registeredAt,
+    apiUrl: state.apiUrl,
+  };
+
   return {
     success: true,
-    state,
+    state: safeState,
     demoMode: isDemoMode(),
     tallyUrl: activeTallyUrl,
     appVersion: app.getVersion(),
@@ -688,58 +929,95 @@ ipcMain.handle("finlayer:fetch-active-company", async () => {
     }
 
     const companyName = active.name;
-    console.log(`[IPC] Active company successfully detected: "${companyName}"`);
+    console.log(`[COMPANY STATE] Active company successfully detected from Tally: "${companyName}"`);
 
     const state = await loadLocalState();
     state.tallyCompanyName = companyName;
     configureConnector(state);
 
-    // Ensure registered with API
+    console.log(`[COMPANY STATE] Current state before company mapping:`, {
+      connectorId: state.connectorId,
+      companyId: state.companyId,
+      tallyCompanyName: state.tallyCompanyName,
+      setupStatus: state.setupStatus,
+    });
+
+    // 1. Ensure registered with API
     if (!state.connectorId) {
       try {
-        console.log(`[IPC] Registering connector with API at ${API_URL}...`);
+        console.log(`[COMPANY STATE] Registering connector with API at ${API_URL}...`);
         const reg = await registerConnectorWithApi({
           deviceId: state.deviceId,
           deviceName: state.deviceName || "Windows-PC",
           operatingSystem: "Windows 11 / 10",
         });
         state.connectorId = reg.connectorId;
-        state.setupStatus = "REGISTERED";
+        state.setupStatus = (reg.setupStatus as any) || "REGISTERED";
         await saveLocalState(state);
-        console.log(`[IPC] Connector registered: ${state.connectorId}`);
+        console.log(`[COMPANY STATE] Connector registered: ${state.connectorId}`);
       } catch (e) {
-        console.warn("[IPC] API registration error:", e);
+        console.warn(`[COMPANY STATE] API registration error at ${API_URL}:`, e);
       }
     }
 
-    // Report discovery to API and select company
+    // 2. Report discovery to API and select company
     if (state.connectorId) {
+      await ensureConnectorToken(state.connectorId).catch(() => {});
       await reportTallyConnected(state.connectorId).catch(() => {});
       await reportTallyCompanies(state.connectorId, [{ name: companyName }]).catch(() => {});
 
       // Automatically map company
       try {
-        console.log(`[IPC] Selecting company "${companyName}" for connector "${state.connectorId}"...`);
+        console.log(`[COMPANY STATE] Calling API selectCompany for connector "${state.connectorId}", company "${companyName}"...`);
         const selection = await selectCompanyForConnector(state.connectorId, companyName);
-        console.log(`[IPC] selectCompanyForConnector returned:`, selection);
+        console.log(`[COMPANY STATE] API selectCompany response:`, selection);
         if (selection && selection.companyId) {
           state.companyId = selection.companyId;
-          state.setupStatus = "WAITING_FOR_GOOGLE";
+          state.setupStatus = (selection.setupStatus as any) || "WAITING_FOR_GOOGLE";
           await saveLocalState(state);
+          console.log(`[COMPANY STATE] Successfully mapped company: companyId="${state.companyId}", setupStatus="${state.setupStatus}"`);
         }
       } catch (e) {
-        console.warn("[IPC] API company mapping error:", e);
+        const errStr = String(e);
+        console.warn(`[COMPANY STATE] API selectCompany error for connector "${state.connectorId}":`, e);
+
+        // If connector is not found on server (e.g. 404), re-register with deviceId and retry
+        if (errStr.includes("404") || errStr.toLowerCase().includes("not found")) {
+          try {
+            console.log(`[COMPANY STATE] Connector "${state.connectorId}" not found on server. Re-registering with deviceId "${state.deviceId}"...`);
+            const reg = await registerConnectorWithApi({
+              deviceId: state.deviceId,
+              deviceName: state.deviceName || "Windows-PC",
+              operatingSystem: "Windows 11 / 10",
+            });
+            state.connectorId = reg.connectorId;
+            state.setupStatus = (reg.setupStatus as any) || "REGISTERED";
+            await saveLocalState(state);
+            console.log(`[COMPANY STATE] Re-registered connectorId="${state.connectorId}". Retrying selectCompany...`);
+
+            const retrySelection = await selectCompanyForConnector(state.connectorId, companyName);
+            console.log(`[COMPANY STATE] API selectCompany response (after re-registration):`, retrySelection);
+            if (retrySelection && retrySelection.companyId) {
+              state.companyId = retrySelection.companyId;
+              state.setupStatus = (retrySelection.setupStatus as any) || "WAITING_FOR_GOOGLE";
+              await saveLocalState(state);
+            }
+          } catch (reErr) {
+            console.error("[COMPANY STATE] Re-registration and selectCompany retry failed:", reErr);
+          }
+        }
       }
     }
 
     await saveLocalState(state);
     configureConnector(state);
 
-    console.log("[IPC] finlayer:fetch-active-company returning:", {
+    console.log("[COMPANY STATE] finlayer:fetch-active-company returning:", {
       success: true,
       companyName,
       companyId: state.companyId,
       connectorId: state.connectorId,
+      setupStatus: state.setupStatus,
     });
 
     return {
@@ -800,18 +1078,46 @@ ipcMain.handle("finlayer:select-company", async (_event, companyName: string) =>
         operatingSystem: "Windows 11 / 10",
       });
       state.connectorId = reg.connectorId;
-      state.setupStatus = "REGISTERED";
+      state.setupStatus = (reg.setupStatus as any) || "REGISTERED";
       await saveLocalState(state);
     }
 
     // 2. Select Company
-    const selection = await selectCompanyForConnector(state.connectorId, companyName);
-    state.companyId = selection.companyId;
-    state.tallyCompanyName = companyName;
-    state.setupStatus = "WAITING_FOR_GOOGLE";
-    await saveLocalState(state);
+    let selection;
+    try {
+      console.log(`[COMPANY STATE] Calling API selectCompany for connector "${state.connectorId}", company "${companyName}"...`);
+      selection = await selectCompanyForConnector(state.connectorId, companyName);
+      console.log(`[COMPANY STATE] API selectCompany response:`, selection);
+    } catch (err) {
+      const errStr = String(err);
+      console.warn(`[COMPANY STATE] select-company failed for connector "${state.connectorId}":`, err);
+      if (errStr.includes("404") || errStr.toLowerCase().includes("not found")) {
+        console.log(`[COMPANY STATE] Re-registering connector with deviceId "${state.deviceId}"...`);
+        const reg = await registerConnectorWithApi({
+          deviceId: state.deviceId,
+          deviceName: state.deviceName || "Windows-PC",
+          operatingSystem: "Windows 11 / 10",
+        });
+        state.connectorId = reg.connectorId;
+        state.setupStatus = (reg.setupStatus as any) || "REGISTERED";
+        await saveLocalState(state);
+        selection = await selectCompanyForConnector(state.connectorId, companyName);
+        console.log(`[COMPANY STATE] API selectCompany response (after re-registration):`, selection);
+      } else {
+        throw err;
+      }
+    }
+
+    if (selection && selection.companyId) {
+      state.companyId = selection.companyId;
+      state.tallyCompanyName = companyName;
+      state.setupStatus = (selection.setupStatus as any) || "WAITING_FOR_GOOGLE";
+      await saveLocalState(state);
+    }
 
     configureConnector(state);
+
+    console.log(`[COMPANY STATE] select-company final: connectorId="${state.connectorId}", companyId="${state.companyId}", companyName="${companyName}", setupStatus="${state.setupStatus}"`);
 
     return {
       success: true,
@@ -820,6 +1126,7 @@ ipcMain.handle("finlayer:select-company", async (_event, companyName: string) =>
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    console.error("[COMPANY STATE] select-company error:", msg);
     return {
       success: false,
       error: msg,
@@ -993,6 +1300,86 @@ ipcMain.handle("finlayer:open-dashboard", async () => {
   return { success: true };
 });
 
+// 8b. Direct Authenticated Download Export (Secure Header-Only Architecture)
+ipcMain.handle("finlayer:download-export", async (_event, { type, format }) => {
+  const cleanType = (type || "vouchers").trim().toLowerCase();
+  const cleanFormat = (format || "csv").trim().toLowerCase();
+
+  if (cleanType !== "vouchers" && cleanType !== "ledgers" && cleanType !== "trial-balance") {
+    return { success: false, error: `Invalid export type "${type}". Supported: vouchers, ledgers, trial-balance.` };
+  }
+  if (cleanFormat !== "csv" && cleanFormat !== "xml") {
+    return { success: false, error: `Invalid export format "${format}". Supported: csv, xml.` };
+  }
+
+  const state = await loadLocalState();
+  if (!state || !state.companyId) {
+    return { success: false, error: "No active company found. Please connect to a company first." };
+  }
+
+  const token = await tokenStorage.getToken();
+  if (!token) {
+    return { success: false, error: "No connector authentication token found. Please register or restart." };
+  }
+
+  const exportUrl = `${API_URL}/dashboard/export/${state.companyId}?type=${cleanType}&format=${cleanFormat}`;
+
+  try {
+    const response = await fetch(exportUrl, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => "");
+      let errMsg = `Server returned HTTP ${response.status}`;
+      try {
+        const parsed = JSON.parse(errText);
+        if (parsed.error) errMsg = parsed.error;
+      } catch {}
+      return { success: false, error: errMsg };
+    }
+
+    // Determine safe default filename
+    const disposition = response.headers.get("content-disposition");
+    let filename = `finlayer_${cleanType}.${cleanFormat}`;
+    if (disposition && disposition.includes("filename=")) {
+      const match = disposition.match(/filename=["']?([^"';]+)["']?/i);
+      if (match && match[1]) {
+        filename = match[1].trim();
+      }
+    }
+
+    const defaultPath = path.join(app.getPath("downloads"), filename);
+    const dialogOptions = {
+      title: "Save FinLayer Export",
+      defaultPath,
+      filters: cleanFormat === "csv"
+        ? [{ name: "CSV Files", extensions: ["csv"] }]
+        : [{ name: "XML Files", extensions: ["xml"] }],
+    };
+    const saveResult = mainWindow
+      ? await dialog.showSaveDialog(mainWindow, dialogOptions)
+      : await dialog.showSaveDialog(dialogOptions);
+
+    if (saveResult.canceled || !saveResult.filePath) {
+      return { success: false, error: "Download cancelled by user." };
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    await fs.writeFile(saveResult.filePath, buffer);
+    shell.showItemInFolder(saveResult.filePath);
+
+    return { success: true, filePath: saveResult.filePath };
+  } catch (err: any) {
+    console.error("[Export Download] Failed to download export:", err);
+    return { success: false, error: err.message || "Failed to download export." };
+  }
+});
+
+
 // 9. Get App & Connector Version
 ipcMain.handle("finlayer:get-app-version", async () => {
   return {
@@ -1028,7 +1415,34 @@ ipcMain.handle("finlayer:restart-and-install", () => {
 // ─── App Lifecycle ────────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
+  // Inject OS native secure storage for connector credentials (Windows DPAPI)
+  TokenStorageManager.setProvider(new ElectronSafeStorageProvider());
+
   const state = await loadLocalState();
+
+  // If connector is registered but companyId or ACTIVE status is missing, attempt sync via heartbeat
+  if (state.connectorId && (!state.companyId || state.setupStatus !== "ACTIVE")) {
+    try {
+      const hb = await sendHeartbeatToApi(state.connectorId, { version: CONNECTOR_VERSION });
+      let changed = false;
+      if (hb && (hb as any).companyId && !state.companyId) {
+        state.companyId = (hb as any).companyId;
+        changed = true;
+      }
+      if (hb && (hb as any).tallyCompanyName && !state.tallyCompanyName) {
+        state.tallyCompanyName = (hb as any).tallyCompanyName;
+        changed = true;
+      }
+      if (hb && (hb as any).setupStatus === "ACTIVE" && state.setupStatus !== "ACTIVE") {
+        state.setupStatus = "ACTIVE";
+        changed = true;
+      }
+      if (changed) {
+        await saveLocalState(state);
+      }
+    } catch {}
+  }
+
   if (state.setupStatus === "ACTIVE") {
     isSetupActive = true;
     if (state.connectorId) {

@@ -1,6 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import prisma from "../db/prisma.js";
 import { syncCompanyFinancialDataToGoogleSheets } from "../services/google-sheet-sync-service.js";
+import {
+  authenticateConnector,
+  requireConnectorOwnership,
+} from "../auth/connector-auth.js";
+import { authenticateUserOrConnector } from "../auth/tenant-auth.js";
 
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -95,7 +100,25 @@ async function handleStartSyncJob(
     } as never);
   }
 
-  // 2. Create SyncJob with status PENDING
+  // 2. Strict authorization validation: Connector identity or User membership
+  if (request.connector && request.connector.id !== connectorId) {
+    return reply.status(403).send({
+      success: false,
+      error: "Forbidden: You cannot trigger sync jobs for another connector.",
+    } as never);
+  }
+
+  if (request.user && request.user.role !== "SUPER_ADMIN") {
+    const userCompanyIds = (request.userMemberships ?? []).map((m) => m.companyId);
+    if (!connector.companyId || !userCompanyIds.includes(connector.companyId)) {
+      return reply.status(403).send({
+        success: false,
+        error: "Forbidden: You do not have permission to trigger sync jobs for this company's connector.",
+      } as never);
+    }
+  }
+
+  // 3. Create SyncJob with status PENDING
   const job = await prisma.syncJob.create({
     data: {
       connectorId,
@@ -188,6 +211,14 @@ async function handleCompleteJob(
     return reply.status(404).send({
       success: false,
       error: `Sync job "${id}" not found.`,
+    } as never);
+  }
+
+  // Verify that the authenticated connector owns this job
+  if (request.connector && job.connectorId !== request.connector.id) {
+    return reply.status(403).send({
+      success: false,
+      error: "Forbidden: You cannot complete a sync job belonging to another connector.",
     } as never);
   }
 
@@ -284,19 +315,28 @@ async function handleCompleteJob(
 export async function jobRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: StartSyncJobBody }>(
     "/sync/start",
-    { schema: startSyncJobSchema },
+    {
+      schema: startSyncJobSchema,
+      preHandler: [authenticateUserOrConnector],
+    },
     handleStartSyncJob
   );
 
   app.get<{ Params: GetPendingJobParams }>(
     "/sync/jobs/:connectorId/pending",
-    { schema: getPendingJobSchema },
+    {
+      schema: getPendingJobSchema,
+      preHandler: [authenticateConnector, requireConnectorOwnership("connectorId")],
+    },
     handleGetPendingJob
   );
 
   app.post<{ Params: CompleteJobParams }>(
     "/sync/jobs/:id/complete",
-    { schema: completeJobSchema },
+    {
+      schema: completeJobSchema,
+      preHandler: [authenticateConnector],
+    },
     handleCompleteJob
   );
 }

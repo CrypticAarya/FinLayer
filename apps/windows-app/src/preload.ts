@@ -15,6 +15,7 @@ export interface FinlayerApi {
   checkForUpdates: () => Promise<{ success: boolean; updateInfo?: any; error?: string }>;
   restartAndInstall: () => Promise<{ success: boolean }>;
   onUpdateDownloaded: (callback: (data: { version: string }) => void) => () => void;
+  downloadExport: (type: string, format: string) => Promise<{ success: boolean; url?: string; error?: string }>;
 }
 
 const api: FinlayerApi = {
@@ -31,6 +32,7 @@ const api: FinlayerApi = {
   getAppVersion: () => ipcRenderer.invoke("finlayer:get-app-version"),
   checkForUpdates: () => ipcRenderer.invoke("finlayer:check-for-updates"),
   restartAndInstall: () => ipcRenderer.invoke("finlayer:restart-and-install"),
+  downloadExport: (type: string, format: string) => ipcRenderer.invoke("finlayer:download-export", { type, format }),
   onUpdateDownloaded: (callback: (data: { version: string }) => void) => {
     const listener = (_event: any, data: { version: string }) => callback(data);
     ipcRenderer.on("finlayer:update-downloaded", listener);

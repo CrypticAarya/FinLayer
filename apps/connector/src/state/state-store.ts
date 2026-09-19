@@ -41,12 +41,17 @@ export async function saveState<T>(state: T): Promise<void> {
 export interface ConnectorState {
   deviceId: string;
   connectorId: string;
+  connectorToken?: string;
+  encryptedConnectorToken?: string;
   registeredAt: string;
   deviceName?: string;
   operatingSystem?: string;
   company?: string;
   companyId?: string;
   tallyCompanyName?: string;
+  apiUrl?: string;
+  schemaVersion?: number;
+  migrationVersion?: number;
   setupStatus?:
     | "REGISTERED"
     | "TALLY_CONNECTED"

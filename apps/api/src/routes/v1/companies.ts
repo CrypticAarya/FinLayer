@@ -282,11 +282,11 @@ async function handleGetCompanyVouchers(
       voucherNumber: v.voucherNumber,
       voucherType: v.voucherType,
       date: v.date.toISOString(),
-      amount: v.amount,
+      amount: Number(v.amount),
       entries: v.voucherEntries.map((e) => ({
         ledgerId: e.ledgerId,
         ledgerName: e.ledger.name,
-        amount: e.amount,
+        amount: Number(e.amount),
         type: e.type,
       })),
     };

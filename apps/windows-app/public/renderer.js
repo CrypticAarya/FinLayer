@@ -166,6 +166,13 @@
       const res = await window.finlayer.fetchActiveCompany();
       companyLoadingView.style.display = "none";
 
+      console.log("[COMPANY STATE] fetchActiveCompany response:", res);
+      console.log("  connectorId:", res?.connectorId);
+      console.log("  companyId:", res?.companyId);
+      console.log("  companyName:", res?.companyName);
+      console.log("  localStorage finlayer-company-id before:", localStorage.getItem("finlayer-company-id"));
+      console.log("  localStorage finlayer-company-name before:", localStorage.getItem("finlayer-company-name"));
+
       if (res.success && res.companyName) {
         currentCompanyName = res.companyName;
         currentCompanyId = res.companyId || null;
@@ -175,13 +182,26 @@
             const init = await window.finlayer.getInitialState();
             if (init?.state?.companyId) {
               currentCompanyId = init.state.companyId;
+              console.log("[COMPANY STATE] Recovered companyId from getInitialState:", currentCompanyId);
             }
-          } catch {}
+          } catch (e) {
+            console.warn("[COMPANY STATE] getInitialState lookup failed:", e);
+          }
+        }
+
+        if (!currentCompanyId) {
+          const stored = localStorage.getItem("finlayer-company-id");
+          if (stored) {
+            currentCompanyId = stored;
+            console.log("[COMPANY STATE] Recovered companyId from localStorage:", currentCompanyId);
+          }
         }
 
         if (!currentCompanyId) {
           try {
+            console.log("[COMPANY STATE] Attempting selectCompany IPC for:", currentCompanyName);
             const sel = await window.finlayer.selectCompany(currentCompanyName);
+            console.log("[COMPANY STATE] selectCompany response:", sel);
             if (sel?.success && sel?.companyId) {
               currentCompanyId = sel.companyId;
             }
@@ -198,17 +218,28 @@
           localStorage.setItem("finlayer-company-name", currentCompanyName);
         }
 
-        console.log("[COMPANY STATE]");
-        console.log("Detected company:", currentCompanyName);
-        console.log("Company ID:", currentCompanyId);
-        console.log("Saved to localStorage:", localStorage.getItem("finlayer-company-id"));
+        console.log("[COMPANY STATE] State values after detection flow:");
+        console.log("  connectorId:", res.connectorId);
+        console.log("  companyId:", currentCompanyId);
+        console.log("  companyName:", currentCompanyName);
+        console.log("  localStorage finlayer-company-id:", localStorage.getItem("finlayer-company-id"));
+        console.log("  localStorage finlayer-company-name:", localStorage.getItem("finlayer-company-name"));
 
         detectedCompanyName.textContent = res.companyName;
-        companyCardTitle.textContent = "Tally Connected ✅";
-        companyCardSubtitle.textContent = "Active company detected automatically.";
         companyFoundView.style.display = "block";
         noCompanyView.style.display = "none";
-        setFooter(`Company found: ${res.companyName}`);
+
+        if (currentCompanyId) {
+          companyCardTitle.textContent = "Tally Connected ✅";
+          companyCardSubtitle.textContent = "Active company detected automatically.";
+          btnContinueCompany.disabled = false;
+          setFooter(`Company found: ${res.companyName}`);
+        } else {
+          companyCardTitle.textContent = "Tally Connected ⚠️";
+          companyCardSubtitle.textContent = "Company detected in Tally, but FinLayer API registration is pending. Click Continue or Retry.";
+          btnContinueCompany.disabled = false;
+          setFooter("Company detected, waiting for API registration");
+        }
       } else {
         companyFoundView.style.display = "none";
         noCompanyView.style.display = "block";
@@ -517,17 +548,23 @@
   btnContinueCompany.addEventListener("click", async () => {
     btnContinueCompany.disabled = true;
 
-    // Verify companyId exists.
+    console.log("[COMPANY STATE] Continue button clicked. Resolving companyId...");
+    console.log("  currentCompanyId:", currentCompanyId);
+    console.log("  currentCompanyName:", currentCompanyName);
+    console.log("  localStorage finlayer-company-id:", localStorage.getItem("finlayer-company-id"));
+    console.log("  localStorage finlayer-company-name:", localStorage.getItem("finlayer-company-name"));
+
     // Priority:
-    // currentCompanyId
-    // ↓
-    // localStorage finlayer-company-id
-    // ↓
-    // window.finlayer.getInitialState()
+    // 1. currentCompanyId
+    // 2. localStorage finlayer-company-id
+    // 3. window.finlayer.getInitialState()
     let companyId = currentCompanyId;
 
     if (!companyId) {
       companyId = localStorage.getItem("finlayer-company-id");
+      if (companyId) {
+        console.log("[COMPANY STATE] Resolved companyId from localStorage:", companyId);
+      }
     }
 
     if (!companyId) {
@@ -535,6 +572,10 @@
         const init = await window.finlayer.getInitialState();
         if (init?.state?.companyId) {
           companyId = init.state.companyId;
+          console.log("[COMPANY STATE] Resolved companyId from getInitialState:", companyId);
+        }
+        if (init?.state?.connectorId) {
+          console.log("[COMPANY STATE] Current connectorId:", init.state.connectorId);
         }
       } catch (err) {
         console.warn("[COMPANY STATE] Error loading initial state:", err);
@@ -546,6 +587,7 @@
       console.log("[COMPANY STATE] companyId missing on Continue. Retrying fetchActiveCompany()...");
       try {
         const retryRes = await window.finlayer.fetchActiveCompany();
+        console.log("[COMPANY STATE] retry fetchActiveCompany response:", retryRes);
         if (retryRes?.success) {
           if (retryRes.companyName) {
             currentCompanyName = retryRes.companyName;
@@ -553,6 +595,7 @@
           }
           if (retryRes.companyId) {
             companyId = retryRes.companyId;
+            console.log("[COMPANY STATE] Resolved companyId from retry fetchActiveCompany:", companyId);
           }
         }
       } catch (err) {
@@ -563,9 +606,12 @@
     // If still missing and currentCompanyName is known, attempt selectCompany
     if (!companyId && currentCompanyName) {
       try {
+        console.log("[COMPANY STATE] Attempting selectCompany with name:", currentCompanyName);
         const sel = await window.finlayer.selectCompany(currentCompanyName);
+        console.log("[COMPANY STATE] selectCompany response:", sel);
         if (sel?.success && sel?.companyId) {
           companyId = sel.companyId;
+          console.log("[COMPANY STATE] Resolved companyId from selectCompany:", companyId);
         }
       } catch (err) {
         console.warn("[COMPANY STATE] Dynamic selectCompany failed:", err);
@@ -576,6 +622,8 @@
     if (!companyId) {
       btnContinueCompany.disabled = false;
       console.error("[COMPANY STATE] Transition prevented: companyId missing!");
+      console.error("  companyName:", currentCompanyName);
+      console.error("  localStorage finlayer-company-id:", localStorage.getItem("finlayer-company-id"));
       showGoogleError("Please retry company detection");
       companyCardSubtitle.textContent = "Please retry company detection";
       setFooter("Please retry company detection");
@@ -589,8 +637,8 @@
     }
     updateDebugCompanyId(companyId);
 
-    console.log("[COMPANY STATE]");
-    console.log("Moving to Google Step:", companyId);
+    console.log("[COMPANY STATE] Successfully resolved companyId. Moving to Google Step:", companyId);
+    console.log("  localStorage finlayer-company-id:", localStorage.getItem("finlayer-company-id"));
 
     btnContinueCompany.disabled = false;
     goToStep(4);
@@ -625,6 +673,28 @@
     }
   });
 
+  const btnWinDownloadExport = document.getElementById("btn-win-download-export");
+  if (btnWinDownloadExport) {
+    btnWinDownloadExport.addEventListener("click", async () => {
+      const type = document.getElementById("win-export-type")?.value || "vouchers";
+      const format = document.getElementById("win-export-format")?.value || "csv";
+      btnWinDownloadExport.disabled = true;
+      btnWinDownloadExport.textContent = "Opening Export…";
+      try {
+        const res = await window.finlayer.downloadExport(type, format);
+        if (!res.success && res.error) {
+          alert("Export notice: " + res.error);
+        }
+      } catch (err) {
+        alert("Export failed: " + err.message);
+      } finally {
+        btnWinDownloadExport.disabled = false;
+        btnWinDownloadExport.textContent = "📥 Download Export";
+      }
+    });
+  }
+
+
   // ── Auto-Update Handlers ───────────────────────────────────────────────────
   if (btnRestartUpdate) {
     btnRestartUpdate.addEventListener("click", async () => {
@@ -652,14 +722,25 @@
     attachGoogleButtonListener();
 
     const storedCompanyId = localStorage.getItem("finlayer-company-id");
+    const storedCompanyName = localStorage.getItem("finlayer-company-name");
     if (storedCompanyId) {
       currentCompanyId = storedCompanyId;
       updateDebugCompanyId(storedCompanyId);
-      console.log("[Init] Restored companyId from localStorage:", storedCompanyId);
+    }
+    if (storedCompanyName) {
+      currentCompanyName = storedCompanyName;
     }
 
     try {
       const init = await window.finlayer.getInitialState();
+      console.log("[COMPANY STATE] DOMContentLoaded initial state:", init);
+      console.log("  connectorId:", init?.state?.connectorId);
+      console.log("  companyId:", init?.state?.companyId);
+      console.log("  companyName:", init?.state?.tallyCompanyName);
+      console.log("  setupStatus:", init?.state?.setupStatus);
+      console.log("  localStorage finlayer-company-id:", localStorage.getItem("finlayer-company-id"));
+      console.log("  localStorage finlayer-company-name:", localStorage.getItem("finlayer-company-name"));
+
       if (init) {
         if (typeof init.demoMode === "boolean") {
           isDemoModeActive = init.demoMode;
@@ -678,6 +759,7 @@
           }
           if (init.state.tallyCompanyName) {
             currentCompanyName = init.state.tallyCompanyName;
+            localStorage.setItem("finlayer-company-name", currentCompanyName);
           }
           if (init.state.setupStatus === "ACTIVE") {
             goToStep(5);

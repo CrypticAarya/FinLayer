@@ -377,10 +377,10 @@ export async function updateTransactionsSheet(
           v.voucherNumber,
           v.voucherType,
           v.partyName || "",
-          v.amount,
+          Number(v.amount),
           ledgerName,
           String(entry.type || "").toUpperCase(),
-          entry.amount,
+          Number(entry.amount),
         ]);
       }
     } else if (v.entries && Array.isArray(v.entries) && v.entries.length > 0) {
@@ -390,10 +390,10 @@ export async function updateTransactionsSheet(
           v.voucherNumber,
           v.voucherType,
           v.partyName || "",
-          v.amount,
+          Number(v.amount),
           entry.ledgerName || "",
           String(entry.type || "").toUpperCase(),
-          entry.amount,
+          Number(entry.amount),
         ]);
       }
     } else {
@@ -402,10 +402,10 @@ export async function updateTransactionsSheet(
         v.voucherNumber,
         v.voucherType,
         v.partyName || "",
-        v.amount,
+        Number(v.amount),
         "",
         "",
-        v.amount,
+        Number(v.amount),
       ]);
     }
   }
