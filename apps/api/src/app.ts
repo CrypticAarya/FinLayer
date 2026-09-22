@@ -7,6 +7,7 @@ import { v1Routes } from "./routes/v1/index.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
 import { googleRoutes } from "./routes/google.js";
 import { exportRoutes } from "./routes/export.js";
+import { saasApiRoutes } from "./routes/saas-api.js";
 
 export const SENSITIVE_LOG_REDACT_PATHS = [
   "pairingCode",
@@ -23,6 +24,8 @@ export const SENSITIVE_LOG_REDACT_PATHS = [
   "*.pairingCode",
   "*.token",
   "*.apiKey",
+  "keyHash",
+  "*.keyHash",
 ];
 
 export interface BuildAppOptions extends FastifyServerOptions {
@@ -66,6 +69,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(dashboardRoutes);
   await app.register(googleRoutes);
   await app.register(exportRoutes);
+  await app.register(saasApiRoutes, { prefix: "/api/v1" });
 
   return app;
 }

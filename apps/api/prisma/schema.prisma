@@ -28,6 +28,7 @@ model Company {
   googleConnection    GoogleConnection?
   syncHistories       SyncHistory[]
   members             CompanyMember[]
+  apiKeys             ApiKey[]
 }
 
 model Ledger {
@@ -213,6 +214,27 @@ model SaasCompanyMapping {
   @@index([saasApplicationId])
   @@index([companyId])
   @@index([externalCustomerId])
+}
+
+// ─── SaaS API Key Models ──────────────────────────────────────────────────────
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  name       String
+  keyPrefix  String
+  keyHash    String    @unique
+  companyId  String
+  status     String    @default("ACTIVE") // "ACTIVE" | "REVOKED"
+  revokedAt  DateTime?
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  company    Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([keyHash])
+  @@index([companyId])
+  @@index([companyId, status])
 }
 
 // ─── Trial Balance Models ─────────────────────────────────────────────────────

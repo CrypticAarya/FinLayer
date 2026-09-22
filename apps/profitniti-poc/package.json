@@ -1,0 +1,19 @@
+{
+  "name": "@profitniti/integration-poc",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ProfitNiti Backend Integration Proof of Concept — Consuming FinLayer SaaS API",
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "test:connect": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}

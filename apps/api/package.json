@@ -25,7 +25,8 @@
     "test:blockers": "tsx test/security-pairing-and-blockers.test.ts",
     "test:anti-hijack": "tsx test/security-provisioning-anti-hijack.test.ts",
     "test:log-redaction": "tsx test/security-log-redaction.test.ts",
-    "test:export": "tsx test/canonical-export.test.ts"
+    "test:export": "tsx test/canonical-export.test.ts",
+    "test:saas-api": "tsx test/security-saas-api.test.ts"
   },
   "dependencies": {
     "@fastify/rate-limit": "^11.2.0",

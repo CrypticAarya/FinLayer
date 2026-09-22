@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ProfitNiti — FinLayer API Integration POC</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111827;
+      --card-border: #1f293d;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --code-bg: #030712;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 2rem 1.5rem;
+    }
+
+    .container {
+      max-width: 1120px;
+      margin: 0 auto;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    .logo-badge {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .brand-pill {
+      background: linear-gradient(135deg, #2563eb, #7c3aed);
+      color: white;
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 0.25rem 0.6rem;
+      border-radius: 9999px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 0.875rem;
+      margin-top: 0.25rem;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    @media (max-width: 768px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+      margin-bottom: 1.5rem;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .card-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .config-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.5rem 0;
+      font-size: 0.85rem;
+      border-bottom: 1px solid #1f2937;
+    }
+
+    .config-row:last-child { border-bottom: none; }
+    .config-label { color: var(--text-muted); }
+    .config-val { font-family: 'JetBrains Mono', monospace; color: #60a5fa; font-size: 0.8rem; }
+
+    .btn-group {
+      display: flex;
+      gap: 0.75rem;
+      margin-top: 1.25rem;
+    }
+
+    button {
+      flex: 1;
+      padding: 0.65rem 1.25rem;
+      border-radius: 0.5rem;
+      font-weight: 600;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      border: 1px solid transparent;
+    }
+
+    .btn-primary {
+      background-color: var(--primary);
+      color: white;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background-color: var(--primary-hover);
+    }
+
+    .btn-outline {
+      background: transparent;
+      border-color: var(--card-border);
+      color: var(--text);
+    }
+
+    .btn-outline:hover:not(:disabled) {
+      background: #1f2937;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.2rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .badge-success { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+    .badge-danger { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+    .badge-idle { background: rgba(156, 163, 175, 0.15); color: #9ca3af; border: 1px solid rgba(156, 163, 175, 0.3); }
+
+    .stat-box {
+      background: var(--code-bg);
+      border-radius: 0.5rem;
+      padding: 0.85rem;
+      text-align: center;
+    }
+
+    .stat-val {
+      font-size: 1.25rem;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .stat-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-top: 0.25rem;
+    }
+
+    .stats-grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+
+    .stats-grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+
+    @media (max-width: 768px) {
+      .stats-grid-4 { grid-template-columns: 1fr 1fr; }
+      .stats-grid-3 { grid-template-columns: 1fr; }
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+      margin-top: 0.5rem;
+    }
+
+    th {
+      text-align: left;
+      padding: 0.6rem 0.5rem;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--card-border);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+    }
+
+    td {
+      padding: 0.5rem;
+      border-bottom: 1px solid #1a2234;
+    }
+
+    .num-cell {
+      text-align: right;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .audit-step {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.5rem 0;
+      font-size: 0.85rem;
+      border-bottom: 1px solid #1a2234;
+    }
+
+    .audit-step:last-child { border-bottom: none; }
+
+    .callout-box {
+      border-radius: 0.5rem;
+      padding: 0.75rem 1rem;
+      margin-bottom: 1rem;
+      font-size: 0.85rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .callout-success {
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #34d399;
+    }
+
+    .callout-danger {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #f87171;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <div class="logo-badge">
+          <h1>ProfitNiti</h1>
+          <span class="brand-pill">Integration Testing UI</span>
+        </div>
+        <p class="subtitle">Complete Data Flow Validation: Tally → FinLayer → FinLayer API → ProfitNiti</p>
+      </div>
+      <div style="display: flex; gap: 0.5rem; align-items: center;">
+        <span id="connectionBadge" class="badge badge-idle">● IDLE</span>
+        <span id="syncStatusBadge" class="badge badge-idle">SYNC STATUS: NOT STARTED</span>
+      </div>
+    </header>
+
+    <!-- Testing UI: Live Banner -->
+    <div id="syncMessageBanner" class="callout-box callout-success" style="display: none;">
+      <span style="font-size: 1.1rem;">ℹ️</span>
+      <span id="syncMessageText">Sync message will appear here.</span>
+    </div>
+
+    <!-- Testing UI: Records Fetched & Sync Metadata Card -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">1. Integration Testing Summary</span>
+        <span id="lastSyncTimeText" class="config-val" style="color: var(--text-muted);">Last Sync: Never</span>
+      </div>
+
+      <div class="stats-grid-4">
+        <div class="stat-box">
+          <div id="statSyncStatus" class="stat-val" style="color: #9ca3af;">IDLE</div>
+          <div class="stat-label">Sync Status</div>
+        </div>
+        <div class="stat-box">
+          <div id="statLedgersCount" class="stat-val" style="color: #60a5fa;">0</div>
+          <div class="stat-label">Ledgers Fetched</div>
+        </div>
+        <div class="stat-box">
+          <div id="statVouchersCount" class="stat-val" style="color: #34d399;">0</div>
+          <div class="stat-label">Vouchers Fetched</div>
+        </div>
+        <div class="stat-box">
+          <div id="statTbEntriesCount" class="stat-val" style="color: #a78bfa;">0</div>
+          <div class="stat-label">Trial Balance Rows</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <!-- FinLayer API Configuration Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">2. FinLayer SaaS API Credentials</span>
+          <span class="badge badge-success">Loaded</span>
+        </div>
+        <div class="config-row">
+          <span class="config-label">API Gateway</span>
+          <span id="cfgApiUrl" class="config-val">Loading...</span>
+        </div>
+        <div class="config-row">
+          <span class="config-label">Target Company ID</span>
+          <span id="cfgCompanyId" class="config-val">Loading...</span>
+        </div>
+        <div class="config-row">
+          <span class="config-label">API Key Storage</span>
+          <span id="cfgMaskedKey" class="config-val">Loading...</span>
+        </div>
+        <div class="config-row">
+          <span class="config-label">Authentication Mode</span>
+          <span class="config-val">Bearer Token (SHA-256 Hashed)</span>
+        </div>
+
+        <div class="btn-group">
+          <button id="btnTest" class="btn-outline" onclick="triggerTestConnection()">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+            Test Connection
+          </button>
+          <button id="btnSync" class="btn-primary" onclick="triggerFullSync()">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+            Execute Full Sync
+          </button>
+        </div>
+      </div>
+
+      <!-- Target Company Details Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">3. Verified Company Metadata</span>
+          <span id="latencyBadge" class="config-val">-- ms</span>
+        </div>
+        <div class="config-row">
+          <span class="config-label">Company Name</span>
+          <span id="compName" class="config-val" style="color: white;">--</span>
+        </div>
+        <div class="config-row">
+          <span class="config-label">Tally Company Name</span>
+          <span id="compTally" class="config-val">--</span>
+        </div>
+        <div class="config-row">
+          <span class="config-label">Tally Connector Status</span>
+          <span id="compConnector" class="config-val">--</span>
+        </div>
+        <div class="config-row">
+          <span class="config-label">Last Ingestion Run</span>
+          <span id="compSync" class="config-val">--</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Trial Balance Card -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">4. Canonical Trial Balance & Accounting Equation</span>
+        <span id="tbBalancedBadge" class="badge badge-idle">Awaiting Sync</span>
+      </div>
+
+      <div class="stats-grid-3">
+        <div class="stat-box">
+          <div id="statDebit" class="stat-val" style="color: #60a5fa;">₹ 0.00</div>
+          <div class="stat-label">Total Debits</div>
+        </div>
+        <div class="stat-box">
+          <div id="statCredit" class="stat-val" style="color: #a78bfa;">₹ 0.00</div>
+          <div class="stat-label">Total Credits</div>
+        </div>
+        <div class="stat-box">
+          <div id="statDiff" class="stat-val" style="color: #34d399;">₹ 0.00</div>
+          <div class="stat-label">Difference (Debit - Credit)</div>
+        </div>
+      </div>
+
+      <div style="max-height: 220px; overflow-y: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Ledger Name</th>
+              <th>Accounting Group</th>
+              <th style="text-align: right;">Debit (₹)</th>
+              <th style="text-align: right;">Credit (₹)</th>
+              <th style="text-align: right;">Net Balance (₹)</th>
+            </tr>
+          </thead>
+          <tbody id="tbTableBody">
+            <tr>
+              <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
+                Click "Execute Full Sync" to pull trial balance from FinLayer.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Vouchers Inspection Card -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">5. Sample Vouchers & Double-Entry Leg Inspection</span>
+        <span id="vouchersCountBadge" class="badge badge-idle">0 Vouchers</span>
+      </div>
+
+      <div style="max-height: 240px; overflow-y: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Voucher #</th>
+              <th>Type</th>
+              <th>Date</th>
+              <th>Party / Ledger Entries</th>
+              <th style="text-align: right;">Amount (₹)</th>
+            </tr>
+          </thead>
+          <tbody id="vouchersTableBody">
+            <tr>
+              <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
+                Click "Execute Full Sync" to inspect sample vouchers and entry legs.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Sync Audit Trail -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">6. Connectivity & Sync Audit Trail</span>
+        <span id="totalDuration" class="config-val">-- ms</span>
+      </div>
+      <div id="auditContainer">
+        <div style="color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem 0;">
+          Audit logs will stream here during synchronization.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function loadConfig() {
+      try {
+        const res = await fetch("/api/config");
+        const data = await res.json();
+        document.getElementById("cfgApiUrl").textContent = data.apiUrl || "--";
+        document.getElementById("cfgCompanyId").textContent = data.companyId || "--";
+        document.getElementById("cfgMaskedKey").textContent = data.maskedApiKey || "--";
+      } catch (err) {
+        console.error("Failed to load config", err);
+      }
+    }
+
+    async function triggerTestConnection() {
+      const btn = document.getElementById("btnTest");
+      const badge = document.getElementById("connectionBadge");
+      btn.disabled = true;
+      btn.textContent = "Probing...";
+
+      try {
+        const res = await fetch("/api/test-connection", { method: "POST" });
+        const data = await res.json();
+        document.getElementById("latencyBadge").textContent = data.latencyMs + " ms";
+
+        if (data.success) {
+          badge.className = "badge badge-success";
+          badge.textContent = "● CONNECTED (" + data.latencyMs + "ms)";
+          if (data.company) {
+            updateCompanyUI(data.company);
+          }
+        } else {
+          badge.className = "badge badge-danger";
+          badge.textContent = "● FAILED (" + (data.error || "HTTP " + data.statusCode) + ")";
+        }
+      } catch (err) {
+        badge.className = "badge badge-danger";
+        badge.textContent = "● NETWORK ERROR";
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg> Test Connection`;
+      }
+    }
+
+    async function triggerFullSync() {
+      const btn = document.getElementById("btnSync");
+      const connBadge = document.getElementById("connectionBadge");
+      const syncBadge = document.getElementById("syncStatusBadge");
+      btn.disabled = true;
+      btn.textContent = "Syncing...";
+
+      try {
+        const res = await fetch("/api/sync", { method: "POST" });
+        const result = await res.json();
+
+        document.getElementById("totalDuration").textContent = result.totalDurationMs + " ms";
+
+        // Update Testing UI Elements
+        const banner = document.getElementById("syncMessageBanner");
+        const bannerText = document.getElementById("syncMessageText");
+        banner.style.display = "flex";
+        bannerText.textContent = result.message || "Sync finished.";
+
+        if (result.success) {
+          banner.className = "callout-box callout-success";
+          syncBadge.className = "badge badge-success";
+          syncBadge.textContent = "SYNC STATUS: SUCCESS";
+          document.getElementById("statSyncStatus").textContent = "SUCCESS";
+          document.getElementById("statSyncStatus").style.color = "#34d399";
+        } else {
+          banner.className = "callout-box callout-danger";
+          syncBadge.className = "badge badge-danger";
+          syncBadge.textContent = "SYNC STATUS: FAILED";
+          document.getElementById("statSyncStatus").textContent = "FAILED";
+          document.getElementById("statSyncStatus").style.color = "#f87171";
+        }
+
+        // Records fetched
+        document.getElementById("statLedgersCount").textContent = (result.recordsFetched?.ledgers ?? 0).toLocaleString();
+        document.getElementById("statVouchersCount").textContent = (result.recordsFetched?.vouchers ?? 0).toLocaleString();
+        document.getElementById("statTbEntriesCount").textContent = (result.recordsFetched?.trialBalanceEntries ?? 0).toLocaleString();
+        document.getElementById("lastSyncTimeText").textContent = "Last Sync: " + new Date(result.lastSyncTime).toLocaleTimeString();
+
+        if (result.connection && result.connection.success) {
+          connBadge.className = "badge badge-success";
+          connBadge.textContent = "● CONNECTED (" + result.connection.latencyMs + "ms)";
+          document.getElementById("latencyBadge").textContent = result.connection.latencyMs + " ms";
+        }
+
+        if (result.company) {
+          updateCompanyUI(result.company);
+        }
+
+        if (result.trialBalance) {
+          updateTrialBalanceUI(result.trialBalance, result.validation);
+        }
+
+        if (result.vouchers) {
+          updateVouchersUI(result.vouchers);
+        }
+
+        updateAuditUI(result.auditTrail);
+      } catch (err) {
+        console.error("Sync failed", err);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Execute Full Sync`;
+      }
+    }
+
+    function updateCompanyUI(company) {
+      document.getElementById("compName").textContent = company.name || "--";
+      document.getElementById("compTally").textContent = company.tallyCompanyName || "--";
+      document.getElementById("compConnector").textContent = company.connectorStatus || "ONLINE (Active)";
+      document.getElementById("compSync").textContent = company.lastSyncAt ? new Date(company.lastSyncAt).toLocaleString() : "Real-time";
+    }
+
+    function updateTrialBalanceUI(tb, validation) {
+      const debit = tb.totals.debitTotal || 0;
+      const credit = tb.totals.creditTotal || 0;
+      const diff = validation.difference || 0;
+
+      document.getElementById("statDebit").textContent = "₹ " + debit.toLocaleString("en-IN", { minimumFractionDigits: 2 });
+      document.getElementById("statCredit").textContent = "₹ " + credit.toLocaleString("en-IN", { minimumFractionDigits: 2 });
+      document.getElementById("statDiff").textContent = "₹ " + diff.toLocaleString("en-IN", { minimumFractionDigits: 2 });
+
+      const badge = document.getElementById("tbBalancedBadge");
+      if (validation.accountingEquationSatisfied) {
+        badge.className = "badge badge-success";
+        badge.textContent = "✓ DEBIT = CREDIT (BALANCED)";
+      } else {
+        badge.className = "badge badge-danger";
+        badge.textContent = "⚠ UNBALANCED DIFFERENCE";
+      }
+
+      const tbody = document.getElementById("tbTableBody");
+      tbody.innerHTML = "";
+      for (const row of tb.data) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td style="font-weight: 500;">${row.ledgerName}</td>
+          <td style="color: var(--text-muted);">${row.groupName}</td>
+          <td class="num-cell" style="color: #60a5fa;">${row.debitAmount > 0 ? "₹ " + row.debitAmount.toFixed(2) : "-"}</td>
+          <td class="num-cell" style="color: #a78bfa;">${row.creditAmount > 0 ? "₹ " + row.creditAmount.toFixed(2) : "-"}</td>
+          <td class="num-cell" style="font-weight: 600;">₹ ${row.netBalance.toFixed(2)}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+    }
+
+    function updateVouchersUI(vouchers) {
+      document.getElementById("vouchersCountBadge").textContent = vouchers.length + " Vouchers Loaded";
+      document.getElementById("vouchersCountBadge").className = "badge badge-success";
+
+      const tbody = document.getElementById("vouchersTableBody");
+      tbody.innerHTML = "";
+
+      for (const v of vouchers) {
+        const entriesSummary = v.entries
+          .map((e) => `<span style="color: ${e.type === 'debit' ? '#60a5fa' : '#a78bfa'}">${e.ledgerName} (${e.type} ₹${e.amount.toFixed(2)})</span>`)
+          .join(" ⇄ ");
+
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td style="font-family: 'JetBrains Mono', monospace; font-weight: 600;">${v.voucherNumber}</td>
+          <td><span class="badge badge-idle">${v.voucherType}</span></td>
+          <td style="color: var(--text-muted);">${new Date(v.date).toLocaleDateString()}</td>
+          <td style="font-size: 0.8rem;">${entriesSummary}</td>
+          <td class="num-cell" style="font-weight: 600;">₹ ${v.amount.toFixed(2)}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+    }
+
+    function updateAuditUI(auditTrail) {
+      const container = document.getElementById("auditContainer");
+      container.innerHTML = "";
+      for (const step of auditTrail) {
+        const div = document.createElement("div");
+        div.className = "audit-step";
+        const isOk = step.status === "SUCCESS";
+        div.innerHTML = `
+          <div>
+            <span style="color: ${isOk ? '#34d399' : '#f87171'}; font-weight: 600;">${isOk ? '✓' : '✗'}</span>
+            <span style="margin-left: 0.5rem; font-weight: 500;">${step.step}</span>
+            ${step.error ? `<div style="color: #f87171; font-size: 0.75rem; margin-left: 1.25rem;">${step.error}</div>` : ''}
+          </div>
+          <span class="config-val">${step.durationMs} ms</span>
+        `;
+        container.appendChild(div);
+      }
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      loadConfig();
+      // Auto-trigger sync on load to show fresh state
+      setTimeout(triggerFullSync, 300);
+    });
+  </script>
+</body>
+</html>
