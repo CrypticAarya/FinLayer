@@ -11,6 +11,7 @@ export interface StartSyncRunParams {
   companyId: string;
   syncRunId?: string;
   recordsFetched: number;
+  syncType?: string;
 }
 
 export interface CompleteSyncRunParams {
@@ -26,7 +27,7 @@ export class SyncAuditService {
    * Initializes or claims a SyncRun in SYNC_STARTED state and records the audit log event.
    */
   public static async startSyncRun(params: StartSyncRunParams): Promise<string> {
-    const { companyId, syncRunId, recordsFetched } = params;
+    const { companyId, syncRunId, recordsFetched, syncType = "VOUCHERS" } = params;
 
     let syncRun;
     if (syncRunId) {
@@ -35,13 +36,17 @@ export class SyncAuditService {
         update: {
           status: "SYNC_STARTED",
           recordsFetched,
+          syncType,
           startedAt: new Date(),
           completedAt: null,
+          durationMs: null,
+          recordsProcessed: 0,
           errorSummary: null,
         },
         create: {
           id: syncRunId,
           companyId,
+          syncType,
           status: "SYNC_STARTED",
           recordsFetched,
           startedAt: new Date(),
@@ -51,6 +56,7 @@ export class SyncAuditService {
       syncRun = await prisma.syncRun.create({
         data: {
           companyId,
+          syncType,
           status: "SYNC_STARTED",
           recordsFetched,
           startedAt: new Date(),
@@ -62,8 +68,8 @@ export class SyncAuditService {
       data: {
         syncRunId: syncRun.id,
         stage: "SYNC_STARTED",
-        message: `Sync started with ${recordsFetched} vouchers received.`,
-        metadata: { recordsFetched },
+        message: `Sync started with ${recordsFetched} records received.`,
+        metadata: { recordsFetched, syncType },
       },
     });
 
@@ -101,6 +107,17 @@ export class SyncAuditService {
   public static async completeSyncRun(params: CompleteSyncRunParams): Promise<void> {
     const { syncRunId, recordsCreated, recordsUpdated, recordsFailed, errorSummary } = params;
 
+    const existing = await prisma.syncRun.findUnique({
+      where: { id: syncRunId },
+      select: { startedAt: true },
+    });
+
+    const now = new Date();
+    const durationMs = existing?.startedAt
+      ? now.getTime() - new Date(existing.startedAt).getTime()
+      : undefined;
+    const recordsProcessed = recordsCreated + recordsUpdated;
+
     const status: SyncStage =
       recordsFailed > 0 && recordsCreated === 0 && recordsUpdated === 0
         ? "SYNC_FAILED"
@@ -111,7 +128,9 @@ export class SyncAuditService {
         where: { id: syncRunId },
         data: {
           status,
-          completedAt: new Date(),
+          completedAt: now,
+          durationMs,
+          recordsProcessed,
           recordsCreated,
           recordsUpdated,
           recordsFailed,
@@ -122,11 +141,13 @@ export class SyncAuditService {
         data: {
           syncRunId,
           stage: status,
-          message: `Sync finished with status ${status}. Created: ${recordsCreated}, Updated: ${recordsUpdated}, Failed: ${recordsFailed}.`,
+          message: `Sync finished with status ${status}. Created: ${recordsCreated}, Updated: ${recordsUpdated}, Failed: ${recordsFailed}, Duration: ${durationMs ?? 0}ms.`,
           metadata: {
             recordsCreated,
             recordsUpdated,
             recordsFailed,
+            recordsProcessed,
+            durationMs,
             errorSummary: errorSummary ?? null,
           },
         },
@@ -138,12 +159,23 @@ export class SyncAuditService {
    * Records a fatal sync failure.
    */
   public static async failSyncRun(syncRunId: string, error: string): Promise<void> {
+    const existing = await prisma.syncRun.findUnique({
+      where: { id: syncRunId },
+      select: { startedAt: true },
+    });
+
+    const now = new Date();
+    const durationMs = existing?.startedAt
+      ? now.getTime() - new Date(existing.startedAt).getTime()
+      : undefined;
+
     await prisma.$transaction([
       prisma.syncRun.update({
         where: { id: syncRunId },
         data: {
           status: "SYNC_FAILED",
-          completedAt: new Date(),
+          completedAt: now,
+          durationMs,
           errorSummary: error,
         },
       }),
@@ -152,7 +184,7 @@ export class SyncAuditService {
           syncRunId,
           stage: "SYNC_FAILED",
           message: `Sync failed: ${error}`,
-          metadata: { error },
+          metadata: { error, durationMs },
         },
       }),
     ]);

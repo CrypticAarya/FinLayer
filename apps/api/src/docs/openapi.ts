@@ -1,7 +1,7 @@
 /**
- * FinLayer V2.2 — OpenAPI 3.0.3 Specification
+ * FinLayer V2.4 — OpenAPI 3.0.3 Specification
  * 
- * Formal API documentation for all FinLayer SaaS endpoints under /api/v1.
+ * Formal API documentation for all FinLayer SaaS endpoints under /api/v1, system health, and data freshness.
  * Designed for external SaaS developers, SDK generation, and Swagger UI.
  */
 
@@ -9,7 +9,7 @@ export const openApiSpec = {
   openapi: "3.0.3",
   info: {
     title: "FinLayer SaaS API",
-    version: "2.2.0",
+    version: "2.4.0",
     description: `
 **FinLayer SaaS API** provides external SaaS applications with high-throughput, company-isolated access to verified accounting data extracted from TallyPrime.
 
@@ -18,6 +18,8 @@ export const openApiSpec = {
 - **Memory-Bounded Pagination**: Ledger and voucher listings support keyset cursor pagination with bounded limits.
 - **NDJSON Streaming**: High-volume voucher synchronization via chunked \`application/x-ndjson\` streaming.
 - **Canonical Double-Entry Accounting**: Real-time balanced Trial Balance aggregation satisfying \`Debit Total === Credit Total\`.
+- **Production Reliability Foundation**: Rate limiting per API key, standardized error envelopes, and automated database health probes.
+- **Data Freshness Visibility**: Real-time connector heartbeats, synchronization audit runs, and company freshness status.
 
 ### Authentication
 Every request requires an active FinLayer SaaS API key passed via:
@@ -37,8 +39,16 @@ Every request requires an active FinLayer SaaS API key passed via:
       url: "/api/v1",
       description: "FinLayer SaaS Gateway (v1)",
     },
+    {
+      url: "/",
+      description: "FinLayer Root Server",
+    },
   ],
   tags: [
+    {
+      name: "Health",
+      description: "API system status, semantic versioning, and database connectivity probe.",
+    },
     {
       name: "Companies",
       description: "Company metadata, sync status, and Tally pairing details.",
@@ -61,6 +71,37 @@ Every request requires an active FinLayer SaaS API key passed via:
     { ApiKeyAuth: [] },
   ],
   paths: {
+    "/health": {
+      get: {
+        tags: ["Health"],
+        summary: "API Health & Database Connectivity Check",
+        description: "Returns API runtime status, semantic version, process uptime, and live PostgreSQL database connectivity status.",
+        operationId: "getHealth",
+        security: [],
+        responses: {
+          "200": {
+            description: "System is healthy and database is connected.",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/HealthResponse",
+                },
+              },
+            },
+          },
+          "503": {
+            description: "System is unhealthy or database is unreachable.",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/HealthResponse",
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     "/companies/{companyId}": {
       get: {
         tags: ["Companies"],
@@ -98,6 +139,50 @@ Every request requires an active FinLayer SaaS API key passed via:
           },
           "404": {
             $ref: "#/components/responses/NotFoundError",
+          },
+        },
+      },
+    },
+    "/companies/{companyId}/sync-status": {
+      get: {
+        tags: ["Companies"],
+        summary: "Get Company Data Freshness & Sync Status",
+        description: "Returns Tally connector status, latest heartbeat, last sync run outcome, duration, and total records processed.",
+        operationId: "getCompanySyncStatus",
+        parameters: [
+          {
+            name: "companyId",
+            in: "path",
+            required: true,
+            description: "FinLayer Company unique identifier (CUID)",
+            schema: {
+              type: "string",
+              example: "cmu84468l00001s3tnvjagcrz",
+            },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Company sync status retrieved successfully.",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/SyncStatusResponse",
+                },
+              },
+            },
+          },
+          "401": {
+            $ref: "#/components/responses/UnauthorizedError",
+          },
+          "403": {
+            $ref: "#/components/responses/ForbiddenError",
+          },
+          "404": {
+            $ref: "#/components/responses/NotFoundError",
+          },
+          "429": {
+            $ref: "#/components/responses/TooManyRequestsError",
           },
         },
       },
@@ -422,13 +507,77 @@ Retrieves multi-leg financial vouchers with full ledger breakdown.
             },
             example: {
               success: false,
+              statusCode: 400,
               error: "Invalid date range: startDate (2026-10-01) must be before or equal to endDate (2026-04-01)",
+              message: "Invalid date range: startDate (2026-10-01) must be before or equal to endDate (2026-04-01)",
+              code: "VALIDATION_ERROR",
+            },
+          },
+        },
+      },
+      TooManyRequestsError: {
+        description: "API key or IP rate limit exceeded.",
+        content: {
+          "application/json": {
+            schema: {
+              $ref: "#/components/schemas/ErrorResponse",
+            },
+            example: {
+              success: false,
+              statusCode: 429,
+              error: "Rate limit exceeded. Try again in 60 seconds.",
+              message: "Rate limit exceeded. Try again in 60 seconds.",
+              code: "RATE_LIMIT_EXCEEDED",
             },
           },
         },
       },
     },
     schemas: {
+      HealthResponse: {
+        type: "object",
+        required: ["status", "version", "uptimeSeconds", "timestamp", "database"],
+        properties: {
+          status: {
+            type: "string",
+            enum: ["healthy", "unhealthy"],
+            example: "healthy",
+          },
+          version: {
+            type: "string",
+            example: "2.3.0",
+          },
+          uptimeSeconds: {
+            type: "integer",
+            example: 124,
+          },
+          timestamp: {
+            type: "string",
+            format: "date-time",
+            example: "2026-09-22T16:30:00.000Z",
+          },
+          database: {
+            type: "object",
+            required: ["status", "latencyMs"],
+            properties: {
+              status: {
+                type: "string",
+                enum: ["connected", "disconnected"],
+                example: "connected",
+              },
+              latencyMs: {
+                type: "number",
+                example: 3.2,
+              },
+              error: {
+                type: "string",
+                nullable: true,
+                example: null,
+              },
+            },
+          },
+        },
+      },
       ErrorResponse: {
         type: "object",
         required: ["success", "error"],
@@ -437,9 +586,21 @@ Retrieves multi-leg financial vouchers with full ledger breakdown.
             type: "boolean",
             example: false,
           },
+          statusCode: {
+            type: "integer",
+            example: 400,
+          },
           error: {
             type: "string",
             example: "Detailed human-readable error description.",
+          },
+          message: {
+            type: "string",
+            example: "Detailed human-readable error description.",
+          },
+          code: {
+            type: "string",
+            example: "BAD_REQUEST",
           },
         },
       },
@@ -523,6 +684,74 @@ Retrieves multi-leg financial vouchers with full ledger breakdown.
           },
           data: {
             $ref: "#/components/schemas/CompanyDto",
+          },
+        },
+      },
+      SyncStatusResponse: {
+        type: "object",
+        required: ["success", "data"],
+        properties: {
+          success: {
+            type: "boolean",
+            example: true,
+          },
+          data: {
+            type: "object",
+            required: ["companyId", "connectorStatus", "recordsProcessed"],
+            properties: {
+              companyId: {
+                type: "string",
+                example: "cmu84468l00001s3tnvjagcrz",
+              },
+              connectorStatus: {
+                type: "string",
+                example: "ONLINE",
+              },
+              lastSyncTime: {
+                type: "string",
+                format: "date-time",
+                nullable: true,
+                example: "2026-09-22T16:30:02.150Z",
+              },
+              lastSyncResult: {
+                type: "string",
+                nullable: true,
+                example: "SYNC_COMPLETED",
+              },
+              recordsProcessed: {
+                type: "integer",
+                example: 45,
+              },
+              connector: {
+                type: "object",
+                nullable: true,
+                properties: {
+                  id: { type: "string", example: "cmu84468l00005s3tnvjagcrz" },
+                  status: { type: "string", example: "ONLINE" },
+                  version: { type: "string", nullable: true, example: "2.4.0" },
+                  lastSeenAt: { type: "string", format: "date-time", example: "2026-09-22T16:35:16.272Z" },
+                  lastHeartbeat: { type: "string", format: "date-time", example: "2026-09-22T16:35:16.272Z" },
+                },
+              },
+              lastSync: {
+                type: "object",
+                nullable: true,
+                properties: {
+                  syncRunId: { type: "string", example: "cmu84468l00006s3tnvjagcrz" },
+                  syncType: { type: "string", example: "VOUCHERS" },
+                  status: { type: "string", example: "SYNC_COMPLETED" },
+                  startedAt: { type: "string", format: "date-time", example: "2026-09-22T16:30:00.000Z" },
+                  completedAt: { type: "string", format: "date-time", nullable: true, example: "2026-09-22T16:30:02.150Z" },
+                  durationMs: { type: "integer", nullable: true, example: 2150 },
+                  recordsProcessed: { type: "integer", example: 45 },
+                  recordsCreated: { type: "integer", example: 40 },
+                  recordsUpdated: { type: "integer", example: 5 },
+                  recordsFailed: { type: "integer", example: 0 },
+                  recordsFetched: { type: "integer", example: 45 },
+                  errorSummary: { type: "string", nullable: true, example: null },
+                },
+              },
+            },
           },
         },
       },

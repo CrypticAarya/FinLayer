@@ -529,6 +529,114 @@ async function handleGetVouchers(
   });
 }
 
+/**
+ * 5. GET /api/v1/companies/:companyId/sync-status
+ * Return data freshness and sync status for the company.
+ */
+async function handleGetSyncStatus(
+  request: FastifyRequest<{ Params: CompanyParams }>,
+  reply: FastifyReply
+): Promise<void> {
+  const { companyId } = request.params;
+
+  const company = await prisma.company.findUnique({
+    where: { id: companyId },
+    select: {
+      id: true,
+      name: true,
+      tallyCompanyName: true,
+      connectors: {
+        orderBy: { lastHeartbeat: "desc" },
+        take: 1,
+        select: {
+          id: true,
+          status: true,
+          connectorVersion: true,
+          lastHeartbeat: true,
+          lastSeenAt: true,
+        },
+      },
+      syncRuns: {
+        orderBy: { startedAt: "desc" },
+        take: 1,
+        select: {
+          id: true,
+          status: true,
+          syncType: true,
+          startedAt: true,
+          completedAt: true,
+          durationMs: true,
+          recordsProcessed: true,
+          recordsCreated: true,
+          recordsUpdated: true,
+          recordsFailed: true,
+          recordsFetched: true,
+          errorSummary: true,
+        },
+      },
+    },
+  });
+
+  if (!company) {
+    return reply.status(404).send({
+      success: false,
+      error: `Company "${companyId}" not found.`,
+    });
+  }
+
+  const latestConnector = company.connectors[0] ?? null;
+  const latestSync = company.syncRuns[0] ?? null;
+
+  const connectorStatus = latestConnector ? latestConnector.status : "DISCONNECTED";
+  const lastSyncTime = latestSync?.completedAt
+    ? latestSync.completedAt.toISOString()
+    : latestSync?.startedAt
+    ? latestSync.startedAt.toISOString()
+    : null;
+  const lastSyncResult = latestSync ? latestSync.status : null;
+  const recordsProcessed = latestSync
+    ? latestSync.recordsProcessed || (latestSync.recordsCreated + latestSync.recordsUpdated)
+    : 0;
+
+  return reply.status(200).send({
+    success: true,
+    data: {
+      companyId: company.id,
+      connectorStatus,
+      lastSyncTime,
+      lastSyncResult,
+      recordsProcessed,
+      connector: latestConnector
+        ? {
+            id: latestConnector.id,
+            status: latestConnector.status,
+            version: latestConnector.connectorVersion ?? null,
+            lastSeenAt: latestConnector.lastSeenAt
+              ? latestConnector.lastSeenAt.toISOString()
+              : latestConnector.lastHeartbeat.toISOString(),
+            lastHeartbeat: latestConnector.lastHeartbeat.toISOString(),
+          }
+        : null,
+      lastSync: latestSync
+        ? {
+            syncRunId: latestSync.id,
+            syncType: latestSync.syncType,
+            status: latestSync.status,
+            startedAt: latestSync.startedAt.toISOString(),
+            completedAt: latestSync.completedAt ? latestSync.completedAt.toISOString() : null,
+            durationMs: latestSync.durationMs,
+            recordsProcessed,
+            recordsCreated: latestSync.recordsCreated,
+            recordsUpdated: latestSync.recordsUpdated,
+            recordsFailed: latestSync.recordsFailed,
+            recordsFetched: latestSync.recordsFetched,
+            errorSummary: latestSync.errorSummary,
+          }
+        : null,
+    },
+  });
+}
+
 // ─── SaaS API Plugin ──────────────────────────────────────────────────────────
 
 export async function saasApiRoutes(app: FastifyInstance): Promise<void> {
@@ -561,5 +669,12 @@ export async function saasApiRoutes(app: FastifyInstance): Promise<void> {
     "/companies/:companyId/vouchers",
     { preHandler: [requireSaasCompanyAccess] },
     handleGetVouchers
+  );
+
+  // 5. GET /api/v1/companies/:companyId/sync-status
+  app.get<{ Params: CompanyParams }>(
+    "/companies/:companyId/sync-status",
+    { preHandler: [requireSaasCompanyAccess] },
+    handleGetSyncStatus
   );
 }

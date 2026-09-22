@@ -64,18 +64,21 @@ model SyncLog {
 // ─── Sync Run & Audit Trail Models ────────────────────────────────────────────
 
 model SyncRun {
-  id             String         @id @default(cuid())
-  companyId      String
-  status         String         @default("SYNC_STARTED") // SYNC_STARTED, SYNC_VALIDATING, SYNC_PROCESSING, SYNC_COMPLETED, SYNC_FAILED
-  startedAt      DateTime       @default(now())
-  completedAt    DateTime?
-  recordsFetched Int            @default(0)
-  recordsCreated Int            @default(0)
-  recordsUpdated Int            @default(0)
-  recordsFailed  Int            @default(0)
-  errorSummary   String?
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  id               String         @id @default(cuid())
+  companyId        String
+  syncType         String         @default("VOUCHERS")
+  status           String         @default("SYNC_STARTED") // SYNC_STARTED, SYNC_VALIDATING, SYNC_PROCESSING, SYNC_COMPLETED, SYNC_FAILED
+  startedAt        DateTime       @default(now())
+  completedAt      DateTime?
+  durationMs       Int?
+  recordsFetched   Int            @default(0)
+  recordsCreated   Int            @default(0)
+  recordsUpdated   Int            @default(0)
+  recordsFailed    Int            @default(0)
+  recordsProcessed Int            @default(0)
+  errorSummary     String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
 
   company   Company        @relation(fields: [companyId], references: [id])
   vouchers  Voucher[]
@@ -84,6 +87,7 @@ model SyncRun {
   @@index([companyId])
   @@index([companyId, status])
   @@index([companyId, startedAt])
+  @@index([companyId, completedAt])
 }
 
 model SyncAuditLog {
@@ -148,27 +152,47 @@ model VoucherEntry {
 // ─── Connector Models ─────────────────────────────────────────────────────────
 
 model Connector {
-  id               String    @id @default(cuid())
+  id               String               @id @default(cuid())
   companyId        String?
   name             String
-  deviceId         String    @unique
-  tokenHash        String?   @unique
+  deviceId         String               @unique
+  tokenHash        String?              @unique
   tokenCreatedAt   DateTime?
   tokenLastUsedAt  DateTime?
   tokenRevokedAt   DateTime?
   operatingSystem  String?
-  status           String    @default("ONLINE")
-  setupStatus      String    @default("REGISTERED")
+  status           String               @default("ONLINE")
+  setupStatus      String               @default("REGISTERED")
   tallyCompanyName String?
-  lastHeartbeat    DateTime  @default(now())
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  connectorVersion String?
+  lastHeartbeat    DateTime             @default(now())
+  lastSeenAt       DateTime?            @default(now())
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
 
-  company  Company?  @relation(fields: [companyId], references: [id])
-  syncJobs SyncJob[]
+  company    Company?             @relation(fields: [companyId], references: [id])
+  syncJobs   SyncJob[]
+  heartbeats ConnectorHeartbeat[]
 
   @@index([companyId])
+  @@index([companyId, status])
   @@index([tokenHash])
+}
+
+model ConnectorHeartbeat {
+  id               String   @id @default(cuid())
+  connectorId      String
+  companyId        String?
+  connectorVersion String?
+  status           String   @default("ONLINE")
+  lastSeenAt       DateTime @default(now())
+  createdAt        DateTime @default(now())
+
+  connector Connector @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+
+  @@index([connectorId])
+  @@index([companyId])
+  @@index([lastSeenAt])
 }
 
 // ─── Sync Job Models ──────────────────────────────────────────────────────────

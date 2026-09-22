@@ -144,7 +144,19 @@ async function main() {
     }
     console.log(`✔ 200 OK (${voucherRes.durationMs}ms) — ${vouchers.length} vouchers retrieved`);
 
-    // ─── Step 4: Verify OpenAPI Documentation Route ──────────────────────────
+    // ─── Step 4: Verify Data Freshness & Sync Status ─────────────────────────
+    process.stdout.write("[4/4] Testing Data Freshness & Sync Status (/sync-status)... ");
+    const syncStatusRes = await apiRequest(`/companies/${companyId}/sync-status`);
+    if (!syncStatusRes.ok) {
+      throw new Error(`Failed to fetch sync status (HTTP ${syncStatusRes.status}): ${syncStatusRes.data.error || "Unknown"}`);
+    }
+    const syncStatus = syncStatusRes.data.data;
+    if (!syncStatus || typeof syncStatus.recordsProcessed !== "number") {
+      throw new Error("Invalid sync status response structure: missing recordsProcessed");
+    }
+    console.log(`✔ 200 OK (${syncStatusRes.durationMs}ms) — Connector: ${syncStatus.connectorStatus}, Processed: ${syncStatus.recordsProcessed}`);
+
+    // ─── Step 5: Verify OpenAPI Documentation Route ──────────────────────────
     process.stdout.write("[Bonus] Testing Read-Only Swagger UI Endpoint (/docs)... ");
     const docsRes = await fetch(`${baseUrl.replace("/api/v1", "")}/docs`);
     if (!docsRes.ok) {

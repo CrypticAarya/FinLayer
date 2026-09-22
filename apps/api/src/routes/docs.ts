@@ -44,7 +44,7 @@ export async function docsRoutes(app: FastifyInstance): Promise<void> {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>FinLayer SaaS API Documentation (v2.2)</title>
+  <title>FinLayer SaaS API Documentation (v2.4)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
@@ -125,7 +125,7 @@ export async function docsRoutes(app: FastifyInstance): Promise<void> {
   <div class="top-bar">
     <div class="top-bar-left">
       <span class="top-bar-title">FinLayer SaaS API</span>
-      <span class="badge">v2.2.0</span>
+      <span class="badge">v2.4.0</span>
       <span class="badge badge-readonly">Read-Only Mode</span>
     </div>
     <div class="top-bar-links">

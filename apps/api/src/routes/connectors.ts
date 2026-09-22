@@ -39,12 +39,21 @@ export interface HeartbeatParams {
   id: string;
 }
 
+export interface HeartbeatBody {
+  version?: string;
+  connectorVersion?: string;
+  status?: string;
+}
+
 export interface HeartbeatResponse {
   success: true;
   status: string;
   setupStatus: string;
   companyId: string | null;
   tallyCompanyName: string | null;
+  connectorId?: string;
+  connectorVersion?: string | null;
+  lastSeenAt?: string;
 }
 
 export interface TallyStatusBody {
@@ -103,15 +112,16 @@ const upgradeV1TokenSchema = {
 const heartbeatSchema = {
   params: {
     type: "object",
-    required: ["id"],
     properties: {
       id: { type: "string" },
     },
   },
   body: {
-    type: "object",
+    type: ["object", "null"],
     properties: {
       version: { type: "string" },
+      connectorVersion: { type: "string" },
+      status: { type: "string" },
     },
   },
 } as const;
@@ -405,32 +415,55 @@ async function handleVerifyToken(
 }
 
 async function handleHeartbeat(
-  request: FastifyRequest<{ Params: HeartbeatParams; Body?: { version?: string } }>,
+  request: FastifyRequest<{ Params?: Partial<HeartbeatParams>; Body?: HeartbeatBody }>,
   reply: FastifyReply
 ): Promise<HeartbeatResponse> {
-  const { id } = request.params;
-  const version = request.body?.version;
+  const connectorId = request.params?.id || request.connector?.id;
+  if (!connectorId) {
+    return reply.status(400).send({
+      success: false,
+      error: "Missing connector identity.",
+    } as never);
+  }
+
+  const connectorVersion = request.body?.connectorVersion || request.body?.version || null;
+  const status = request.body?.status || "ONLINE";
+  const now = new Date();
 
   const existing = await prisma.connector.findUnique({
-    where: { id },
+    where: { id: connectorId },
   });
 
   if (!existing) {
     return reply.status(404).send({
       success: false,
-      error: `Connector "${id}" not found.`,
+      error: `Connector "${connectorId}" not found.`,
     } as never);
   }
 
-  const updated = await prisma.connector.update({
-    where: { id },
-    data: {
-      status: "ONLINE",
-      lastHeartbeat: new Date(),
-    },
-  });
+  // Update Connector and record immutable ConnectorHeartbeat entry in transaction
+  const [updated] = await prisma.$transaction([
+    prisma.connector.update({
+      where: { id: connectorId },
+      data: {
+        status,
+        lastHeartbeat: now,
+        lastSeenAt: now,
+        ...(connectorVersion ? { connectorVersion } : {}),
+      },
+    }),
+    prisma.connectorHeartbeat.create({
+      data: {
+        connectorId,
+        companyId: existing.companyId,
+        connectorVersion: connectorVersion || existing.connectorVersion,
+        status,
+        lastSeenAt: now,
+      },
+    }),
+  ]);
 
-  request.log.debug({ connectorId: id, version }, "Heartbeat updated with version");
+  request.log.debug({ connectorId, connectorVersion, status }, "Heartbeat recorded successfully");
 
   return reply.status(200).send({
     success: true,
@@ -438,6 +471,9 @@ async function handleHeartbeat(
     setupStatus: updated.setupStatus,
     companyId: updated.companyId,
     tallyCompanyName: updated.tallyCompanyName,
+    connectorId: updated.id,
+    connectorVersion: updated.connectorVersion,
+    lastSeenAt: updated.lastSeenAt?.toISOString() || now.toISOString(),
   });
 }
 
@@ -789,11 +825,20 @@ export async function connectorRoutes(app: FastifyInstance): Promise<void> {
     handleRevokeToken
   );
 
-  app.post<{ Params: HeartbeatParams }>(
+  app.post<{ Params: HeartbeatParams; Body?: HeartbeatBody }>(
     "/connectors/:id/heartbeat",
     {
       schema: heartbeatSchema,
       preHandler: [authenticateConnector, requireConnectorOwnership("id")],
+    },
+    handleHeartbeat
+  );
+
+  app.post<{ Body?: HeartbeatBody }>(
+    "/connectors/heartbeat",
+    {
+      schema: { body: heartbeatSchema.body },
+      preHandler: [authenticateConnector],
     },
     handleHeartbeat
   );
