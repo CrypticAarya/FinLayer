@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell, safeStorage } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell, safeStorage, Notification } from "electron";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
@@ -26,7 +26,7 @@ import {
   reportTallyCompanies,
   CONNECTOR_VERSION,
 } from "../../connector/src/api/client.js";
-import { startJobWorker, type JobWorkerHandle } from "../../connector/src/jobs/job-worker.js";
+import { startJobWorker, syncFinancialDataPipeline, type JobWorkerHandle } from "../../connector/src/jobs/job-worker.js";
 import { config as connectorConfig } from "../../connector/src/config.js";
 import type { ConnectorState } from "../../connector/src/state/state-store.js";
 import { type ITokenStorage, TokenStorageManager } from "../../connector/src/state/token-storage.js";
@@ -509,6 +509,17 @@ let isSetupActive = false;
 function setupAutoUpdater() {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.allowPrerelease = true;
+  autoUpdater.allowDowngrade = false;
+
+  autoUpdater.logger = {
+    info: (msg: any) => console.log(`[AutoUpdater] ${msg}`),
+    warn: (msg: any) => console.warn(`[AutoUpdater WARN] ${msg}`),
+    error: (msg: any) => console.error(`[AutoUpdater ERROR] ${msg}`),
+    debug: (msg: any) => {
+      if (process.env.FINLAYER_DEBUG === "1") console.log(`[AutoUpdater DEBUG] ${msg}`);
+    },
+  };
 
   const customUpdateUrl = process.env.FINLAYER_UPDATE_URL?.trim();
   if (customUpdateUrl) {
@@ -518,6 +529,7 @@ function setupAutoUpdater() {
         provider: "generic",
         url: customUpdateUrl,
       });
+      autoUpdater.forceDevUpdateConfig = true;
     } catch (err) {
       console.warn("[AutoUpdater] Error setting custom feed URL:", err);
     }
@@ -542,16 +554,44 @@ function setupAutoUpdater() {
   autoUpdater.on("update-available", (info) => {
     console.log(`[AutoUpdater] Update available: v${info.version}`);
     saveUpdateState({ status: "AVAILABLE", availableVersion: info.version });
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("finlayer:update-available", {
+        version: info.version,
+        releaseDate: info.releaseDate,
+      });
+    }
+
+    try {
+      if (Notification.isSupported()) {
+        new Notification({
+          title: "FinLayer Update Available",
+          body: `FinLayer v${info.version} is available. Downloading update in background...`,
+          silent: false,
+        }).show();
+      }
+    } catch (notifErr) {
+      console.warn("[AutoUpdater] Desktop notification error:", notifErr);
+    }
   });
 
-  autoUpdater.on("update-not-available", () => {
-    console.log(`[AutoUpdater] App is up to date (current: v${app.getVersion()})`);
+  autoUpdater.on("update-not-available", (info) => {
+    console.log(`[AutoUpdater] App is up to date (current: v${app.getVersion()}, latest: v${info?.version || app.getVersion()})`);
     saveUpdateState({ status: "IDLE" });
   });
 
   autoUpdater.on("download-progress", (progress) => {
-    console.log(`[AutoUpdater] Download progress: ${Math.round(progress.percent)}%`);
+    console.log(`[AutoUpdater] Download progress: ${Math.round(progress.percent)}% (${Math.round((progress.bytesPerSecond || 0) / 1024)} KB/s)`);
     saveUpdateState({ status: "DOWNLOADING" });
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("finlayer:update-progress", {
+        percent: Math.round(progress.percent),
+        bytesPerSecond: progress.bytesPerSecond,
+        transferred: progress.transferred,
+        total: progress.total,
+      });
+    }
   });
 
   autoUpdater.on("update-downloaded", (info) => {
@@ -561,12 +601,27 @@ function setupAutoUpdater() {
       downloadedVersion: info.version,
     });
 
-    // Only show update notification after setup is completed!
-    if (isSetupActive && mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("finlayer:update-downloaded", { version: info.version });
     } else {
       pendingDownloadedUpdate = { version: info.version };
-      console.log("[AutoUpdater] Onboarding in progress: update notification deferred until setup completes.");
+      console.log("[AutoUpdater] Onboarding in progress: update notification saved for completion.");
+    }
+
+    try {
+      if (Notification.isSupported()) {
+        const notif = new Notification({
+          title: "FinLayer Update Ready",
+          body: `FinLayer v${info.version} is downloaded. Restart to apply update.`,
+          silent: false,
+        });
+        notif.on("click", () => {
+          autoUpdater.quitAndInstall(false, true);
+        });
+        notif.show();
+      }
+    } catch (notifErr) {
+      console.warn("[AutoUpdater] Desktop notification error:", notifErr);
     }
   });
 
@@ -669,13 +724,22 @@ function createWindow(): void {
   mainWindow.once("ready-to-show", () => {
     mainWindow?.show();
 
-    // Trigger silent background update check on app startup (if not in automated testing mode)
+    // Trigger update check on app startup (3s delay so initial startup is smooth)
     if (process.env.TEST_VERIFY !== "1" && process.env.TEST_UPDATE !== "1") {
       setTimeout(() => {
+        console.log("[AutoUpdater] Initiating startup update check...");
         autoUpdater.checkForUpdates().catch((err) => {
-          console.log("[AutoUpdater] Initial silent check skipped:", err.message);
+          console.log("[AutoUpdater] Startup update check note:", err.message);
         });
       }, 3000);
+
+      // Periodic background check every 4 hours
+      setInterval(() => {
+        console.log("[AutoUpdater] Initiating periodic background update check...");
+        autoUpdater.checkForUpdates().catch((err) => {
+          console.log("[AutoUpdater] Periodic update check note:", err.message);
+        });
+      }, 4 * 60 * 60 * 1000);
     }
 
     if (process.env.TEST_UPDATE === "1") {
@@ -735,16 +799,16 @@ function createWindow(): void {
             }
           }
 
-          console.log("[Test Flow] 2. Company detected! Clicking Continue to Google step...");
+          console.log("[Test Flow] 2. Company detected! Clicking Continue to Sync step...");
           companyBtn?.click();
 
           await new Promise(r => setTimeout(r, 1200));
-          console.log("[Test Flow] 3. In Google Sheet step. Clicking Connect Google Account...");
-          const googleBtn = document.getElementById("btn-connect-google");
-          if (googleBtn) {
-            googleBtn.click();
+          console.log("[Test Flow] 3. In Initial Sync step. Clicking Start Sync...");
+          const syncBtn = document.getElementById("btn-start-sync");
+          if (syncBtn) {
+            syncBtn.click();
           } else {
-            console.error("[Test Flow] btn-connect-google not found!");
+            console.error("[Test Flow] btn-start-sync not found!");
           }
 
           await new Promise(r => setTimeout(r, 2000));
@@ -755,25 +819,6 @@ function createWindow(): void {
         console.log("✓ TEST_FLOW completed");
         app.quit();
       }, 15000);
-    }
-
-    if (process.env.TEST_FALLBACK === "1") {
-      console.log("✓ TEST_FALLBACK: Testing UI fallback when companyId is missing");
-      mainWindow?.webContents.executeJavaScript(`
-        (async () => {
-          const googleBtn = document.getElementById("btn-connect-google");
-          if (googleBtn) {
-            googleBtn.click();
-          }
-          await new Promise(r => setTimeout(r, 600));
-          const errEl = document.getElementById("google-error-message");
-          console.log("[Fallback Result] Display style: " + errEl?.style.display + ", Text: " + errEl?.textContent?.trim());
-        })();
-      `);
-      setTimeout(() => {
-        console.log("✓ TEST_FALLBACK completed");
-        app.quit();
-      }, 3000);
     }
   });
 
@@ -973,7 +1018,7 @@ ipcMain.handle("finlayer:fetch-active-company", async () => {
         console.log(`[COMPANY STATE] API selectCompany response:`, selection);
         if (selection && selection.companyId) {
           state.companyId = selection.companyId;
-          state.setupStatus = (selection.setupStatus as any) || "WAITING_FOR_GOOGLE";
+          state.setupStatus = (selection.setupStatus as any) || "READY_FOR_SYNC";
           await saveLocalState(state);
           console.log(`[COMPANY STATE] Successfully mapped company: companyId="${state.companyId}", setupStatus="${state.setupStatus}"`);
         }
@@ -999,7 +1044,7 @@ ipcMain.handle("finlayer:fetch-active-company", async () => {
             console.log(`[COMPANY STATE] API selectCompany response (after re-registration):`, retrySelection);
             if (retrySelection && retrySelection.companyId) {
               state.companyId = retrySelection.companyId;
-              state.setupStatus = (retrySelection.setupStatus as any) || "WAITING_FOR_GOOGLE";
+              state.setupStatus = (retrySelection.setupStatus as any) || "READY_FOR_SYNC";
               await saveLocalState(state);
             }
           } catch (reErr) {
@@ -1111,7 +1156,7 @@ ipcMain.handle("finlayer:select-company", async (_event, companyName: string) =>
     if (selection && selection.companyId) {
       state.companyId = selection.companyId;
       state.tallyCompanyName = companyName;
-      state.setupStatus = (selection.setupStatus as any) || "WAITING_FOR_GOOGLE";
+      state.setupStatus = (selection.setupStatus as any) || "READY_FOR_SYNC";
       await saveLocalState(state);
     }
 
@@ -1134,125 +1179,59 @@ ipcMain.handle("finlayer:select-company", async (_event, companyName: string) =>
   }
 });
 
-// 5. Start Google OAuth Flow (or Direct Demo Sheet Connection)
-ipcMain.handle("finlayer:start-google-auth", async (_event, companyId: string) => {
-  console.log("[MAIN] start-google-auth called", companyId);
-
-  // If companyId was not passed from renderer, recover from persistent local state
-  if (!companyId) {
+// 4. Initial Data Sync (Tally -> FinLayer Cloud)
+ipcMain.handle("finlayer:trigger-initial-sync", async (_event, companyId?: string) => {
+  try {
     const state = await loadLocalState();
-    if (state.companyId) {
-      companyId = state.companyId;
-      console.log("[MAIN] Recovered companyId from persistent state:", companyId);
-    } else if (state.connectorId && state.tallyCompanyName) {
-      try {
-        const selection = await selectCompanyForConnector(state.connectorId, state.tallyCompanyName);
-        if (selection && selection.companyId) {
-          state.companyId = selection.companyId;
-          companyId = selection.companyId;
-          await saveLocalState(state);
-          console.log("[MAIN] Dynamically mapped company and saved state:", companyId);
-        }
-      } catch (e) {
-        console.warn("[MAIN] Dynamic company selection failed:", e);
+    if (companyId) {
+      state.companyId = companyId;
+    }
+    configureConnector(state);
+
+    console.log(`[INITIAL SYNC] Starting initial financial data sync for company "${state.tallyCompanyName}" (connectorId: "${state.connectorId}")...`);
+
+    if (state.connectorId) {
+      await ensureConnectorToken(state.connectorId).catch(() => {});
+    }
+
+    // Run the complete financial data sync pipeline (Trial Balance, Ledgers, Vouchers)
+    try {
+      await syncFinancialDataPipeline();
+      console.log("[INITIAL SYNC] Initial financial data pipeline completed successfully.");
+    } catch (pipelineErr) {
+      console.warn("[INITIAL SYNC] Direct pipeline sync note:", pipelineErr);
+      // Fallback: trigger background sync job on API if server is running
+      if (state.connectorId) {
+        await fetch(`${API_URL}/sync/start`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            connectorId: state.connectorId,
+            type: "FINANCIAL_DATA",
+          }),
+        }).catch(() => {});
       }
     }
-  }
 
-  if (!companyId) {
-    console.error("[MAIN] Google auth failed: Company ID missing");
+    state.setupStatus = "ACTIVE";
+    await saveLocalState(state);
+    isSetupActive = true;
+
+    if (state.connectorId) {
+      startBackgroundServices(state.connectorId);
+    }
+
+    return {
+      success: true,
+      company: state.tallyCompanyName,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[INITIAL SYNC] Sync error:", msg);
     return {
       success: false,
-      error: "Please retry company detection",
+      error: msg,
     };
-  }
-
-  // 1. In DEMO_MODE, bypass Google OAuth login and connect demo Google Sheet directly
-  if (isDemoMode()) {
-    console.log(`[DEMO_MODE] Connecting demo Google Sheet automatically without OAuth for companyId: ${companyId}`);
-    try {
-      const demoRes = await fetch(`${API_URL}/google/demo-connect/${companyId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      const data = (await demoRes.json()) as any;
-      console.log("[DEMO_MODE] Demo sheet connection established:", data);
-      return {
-        success: true,
-        connected: true,
-        demoMode: true,
-        spreadsheetId: data.spreadsheetId,
-        spreadsheetUrl: data.spreadsheetUrl,
-      };
-    } catch (err) {
-      console.warn("[DEMO_MODE] Automatic demo-connect failed, falling back to browser connect:", err);
-    }
-  }
-
-  // 2. Production Google OAuth Flow (untouched for future production)
-  const oauthUrl = `${API_URL}/google/connect/${companyId}`;
-  console.log(`Opening browser:\n${oauthUrl}`);
-
-  try {
-    await shell.openExternal(oauthUrl);
-    return { success: true, url: oauthUrl, demoMode: false };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[MAIN] shell.openExternal failed: ${msg}`);
-    return { success: false, error: msg };
-  }
-});
-
-// 5b. Get Sync Progress Status (for demo flow sync confirmation)
-ipcMain.handle("finlayer:get-sync-status", async (_event, companyId: string) => {
-  try {
-    const res = await fetch(`${API_URL}/dashboard/financial-summary/${companyId}`);
-    if (!res.ok) return { completed: false };
-    const data = (await res.json()) as any;
-    const hasSyncHistory = Boolean(data.company?.syncHistories?.length || data.lastSync);
-    return {
-      completed: Boolean(data.success && hasSyncHistory),
-      summary: data.summary || null,
-      lastSync: data.lastSync || null,
-    };
-  } catch {
-    return { completed: false };
-  }
-});
-
-// 6. Check Google Connection Status
-ipcMain.handle("finlayer:check-google-status", async (_event, companyId: string) => {
-  if (!companyId) {
-    const state = await loadLocalState();
-    if (state.companyId) {
-      companyId = state.companyId;
-    }
-  }
-
-  console.log("[WINDOWS] Checking Google status");
-  console.log(`[WINDOWS] Company ID: ${companyId}`);
-
-  try {
-    const res = await fetch(`${API_URL}/google/status/${companyId}`);
-    if (!res.ok) {
-      const errorText = await res.text().catch(() => "");
-      console.log(`[WINDOWS] Google connection response: HTTP ${res.status} ${errorText}`);
-      return { connected: false, companyId };
-    }
-    const data = (await res.json()) as { connected: boolean; companyId?: string; email?: string; connection?: any; demoMode?: boolean };
-    console.log("[WINDOWS] Google connection response:", JSON.stringify(data));
-    return {
-      connected: Boolean(data.connected),
-      demoMode: Boolean(data.demoMode ?? isDemoMode()),
-      companyId: data.companyId || companyId,
-      email: data.email || data.connection?.googleEmail || null,
-      connection: data.connection || null,
-    };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.log(`[WINDOWS] Google connection response: error - ${msg}`);
-    return { connected: false, error: msg };
   }
 });
 
@@ -1267,7 +1246,7 @@ ipcMain.handle("finlayer:complete-setup", async () => {
   if (state.connectorId) {
     startBackgroundServices(state.connectorId);
 
-    // Trigger an immediate initial sync job to sync Tally data to Google Sheet
+    // Trigger an immediate initial sync job to sync Tally data to FinLayer Cloud API
     try {
       const syncRes = await fetch(`${API_URL}/sync/start`, {
         method: "POST",

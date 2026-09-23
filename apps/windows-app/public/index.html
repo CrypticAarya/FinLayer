@@ -17,13 +17,13 @@
     <div class="app-version" id="app-version-badge">v1.0.0 (Windows)</div>
   </header>
 
-  <!-- ── Update Notification Banner (Shown only after setup is completed) ── -->
+  <!-- ── Update Notification Banner ── -->
   <div id="update-banner" class="update-banner" style="display:none;">
     <div class="update-banner-info">
-      <span class="update-pulse-dot"></span>
-      <span>Update downloaded: <strong id="update-banner-version">v1.0.1</strong>. Restart now to apply.</span>
+      <span class="update-pulse-dot" id="update-banner-dot"></span>
+      <span id="update-banner-message">Update available: <strong id="update-banner-version">v2.4.0</strong></span>
     </div>
-    <button class="btn-update-restart" id="btn-restart-update">Restart &amp; Update</button>
+    <button class="btn-update-restart" id="btn-restart-update" style="display:none;">Restart &amp; Update</button>
   </div>
 
   <!-- ── Stepper Indicator ── -->
@@ -34,7 +34,7 @@
     </div>
     <div class="step-dot-wrap" id="dot-step-2">
       <div class="step-dot">2</div>
-      <span>TallyPrime</span>
+      <span>Tally Connection</span>
     </div>
     <div class="step-dot-wrap" id="dot-step-3">
       <div class="step-dot">3</div>
@@ -42,11 +42,11 @@
     </div>
     <div class="step-dot-wrap" id="dot-step-4">
       <div class="step-dot">4</div>
-      <span>Google Sheet</span>
+      <span>Initial Sync</span>
     </div>
     <div class="step-dot-wrap" id="dot-step-5">
       <div class="step-dot">5</div>
-      <span>Ready</span>
+      <span>Connector Active</span>
     </div>
   </div>
 
@@ -58,7 +58,7 @@
       <div class="card-icon">⚡</div>
       <h2>Welcome to FinLayer</h2>
       <p class="subtitle">
-        Connect TallyPrime to your FinLayer Cloud Dashboard and Google Sheets in under 60 seconds.
+        Connect TallyPrime to your FinLayer Cloud API and downstream applications in under 60 seconds.
       </p>
       <button class="btn-primary" id="btn-start-setup">
         Start Setup &rarr;
@@ -104,7 +104,7 @@
           <div class="company-name-text" id="detected-company-name">Loading…</div>
         </div>
         <button class="btn-primary" id="btn-continue-company">
-          Continue &rarr;
+          Continue to Initial Sync &rarr;
         </button>
       </div>
 
@@ -127,68 +127,62 @@
       </div>
     </div>
 
-    <!-- STEP 4: Google Sheet Connection -->
+    <!-- STEP 4: Initial Data Sync -->
     <div class="step-card" id="card-step-4">
-      <div class="card-icon">📊</div>
-      <h2>Google Sheet Connection</h2>
+      <div class="card-icon">🔄</div>
+      <h2>Initial Data Sync</h2>
       <p class="subtitle">
-        Authorize FinLayer to automatically sync your Trial Balance, Ledgers, and Transactions into Google Sheets.
+        Synchronize your Trial Balance, Ledgers, and Vouchers from TallyPrime to FinLayer Cloud API.
       </p>
 
-      <div class="status-box">
-        <span class="status-box-label">Google Sheet Status</span>
-        <div class="status-badge not-connected" id="google-status-badge">
-          <span class="status-dot red"></span>
-          <span id="google-status-text">Not Connected</span>
+      <div class="status-box" style="flex-direction:column;align-items:flex-start;gap:8px;margin-bottom:16px;">
+        <span class="status-box-label">Target Company:</span>
+        <div class="company-name-text" id="sync-company-name">(No company selected)</div>
+      </div>
+
+      <div id="sync-progress-box" style="margin-bottom:18px;padding:16px 20px;background:rgba(15,23,42,0.85);border:1px solid rgba(56,189,248,0.3);border-radius:10px;text-align:left;">
+        <div id="sync-status-msg" style="font-size:0.95rem;font-weight:600;color:#38bdf8;margin-bottom:10px;">
+          Ready to synchronize accounting data
+        </div>
+        <div style="font-size:0.85rem;color:var(--muted);display:flex;flex-direction:column;gap:8px;">
+          <div id="sync-item-tb" style="display:flex;align-items:center;gap:8px;"><span>📊</span> <span>Trial Balance &amp; Chart of Accounts</span></div>
+          <div id="sync-item-ledgers" style="display:flex;align-items:center;gap:8px;"><span>📁</span> <span>Master Ledgers</span></div>
+          <div id="sync-item-vouchers" style="display:flex;align-items:center;gap:8px;"><span>📑</span> <span>Financial Vouchers &amp; Entries</span></div>
         </div>
       </div>
 
-      <div id="debug-company-box" style="margin-bottom:14px;padding:8px 12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:6px;font-size:0.85rem;color:#94a3b8;font-family:monospace;text-align:left;">
-        Company ID: <span id="debug-company-id-val" style="color:#38bdf8;font-weight:600;">(loading...)</span>
-      </div>
-
-      <!-- Demo Mode Live Sync Flow UI -->
-      <div id="demo-sync-container" style="display:none;margin-top:14px;margin-bottom:14px;padding:16px 20px;background:rgba(15,23,42,0.85);border:1px solid rgba(56,189,248,0.3);border-radius:10px;text-align:left;">
-        <div id="demo-ui-sheet" style="font-size:0.95rem;font-weight:600;color:#10b981;margin-bottom:8px;">
-          Google Sheet Connected ✅
-        </div>
-        <div id="demo-ui-sync" style="font-size:0.95rem;font-weight:600;color:#38bdf8;margin-bottom:8px;display:none;">
-          Sync Started...
-        </div>
-        <div id="demo-ui-complete" style="font-size:0.95rem;font-weight:600;color:#10b981;display:none;">
-          Sync Complete ✅
-        </div>
-      </div>
-
-      <button class="btn-primary" id="btn-connect-google">
-        Connect Google Account &rarr;
+      <button class="btn-primary" id="btn-start-sync">
+        Start Initial Sync &rarr;
       </button>
 
-      <div id="google-error-message" style="display:none;margin-top:14px;padding:12px 16px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.3);border-radius:8px;color:#f87171;font-size:0.85rem;text-align:center;line-height:1.4;">
-        Please retry company detection
+      <div id="sync-error-message" style="display:none;margin-top:14px;padding:12px 16px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.3);border-radius:8px;color:#f87171;font-size:0.85rem;text-align:center;line-height:1.4;">
       </div>
 
-      <button class="btn-primary" id="btn-continue-google" style="margin-top:16px;display:none;">
-        Continue to Final Step &rarr;
+      <button class="btn-primary" id="btn-continue-sync" style="margin-top:16px;display:none;">
+        Continue to Connector Active &rarr;
       </button>
     </div>
 
-    <!-- STEP 5: Final Screen (Setup Complete) -->
+    <!-- STEP 5: Final Screen (Connector Active) -->
     <div class="step-card" id="card-step-5">
       <div class="card-icon">🎉</div>
-      <h2>Setup Complete</h2>
+      <h2>Connector Active 🟢</h2>
       <p class="subtitle">
-        FinLayer Connector is active and will automatically synchronize your financial data.
+        FinLayer Connector is active and automatically synchronizing financial data from TallyPrime to FinLayer Cloud API.
       </p>
 
       <div class="checklist-card">
         <div class="checklist-item">
-          <span>Tally Connected</span>
+          <span>TallyPrime Connected</span>
           <span class="badge-check">✅ Connected</span>
         </div>
         <div class="checklist-item">
-          <span>Google Sheet Connected</span>
-          <span class="badge-check">✅ Connected</span>
+          <span>FinLayer Cloud API Synced</span>
+          <span class="badge-check">✅ Synced</span>
+        </div>
+        <div class="checklist-item">
+          <span>Automated Background Sync</span>
+          <span class="badge-check">✅ Active</span>
         </div>
       </div>
 
