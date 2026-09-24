@@ -1,11 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import prisma from "../db/prisma.js";
-import { syncCompanyFinancialDataToGoogleSheets } from "../services/google-sheet-sync-service.js";
 import {
   authenticateConnector,
   requireConnectorOwnership,
 } from "../auth/connector-auth.js";
-import { authenticateUserOrConnector } from "../auth/tenant-auth.js";
 
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -100,22 +98,12 @@ async function handleStartSyncJob(
     } as never);
   }
 
-  // 2. Strict authorization validation: Connector identity or User membership
+  // 2. Strict authorization validation: Connector identity
   if (request.connector && request.connector.id !== connectorId) {
     return reply.status(403).send({
       success: false,
       error: "Forbidden: You cannot trigger sync jobs for another connector.",
     } as never);
-  }
-
-  if (request.user && request.user.role !== "SUPER_ADMIN") {
-    const userCompanyIds = (request.userMemberships ?? []).map((m) => m.companyId);
-    if (!connector.companyId || !userCompanyIds.includes(connector.companyId)) {
-      return reply.status(403).send({
-        success: false,
-        error: "Forbidden: You do not have permission to trigger sync jobs for this company's connector.",
-      } as never);
-    }
   }
 
   // 3. Create SyncJob with status PENDING
@@ -232,7 +220,7 @@ async function handleCompleteJob(
 
   request.log.info({ jobId: id }, "Sync job completed");
 
-  // If connector is linked to a company, track SyncHistory & perform decoupled Google Sheets sync
+  // If connector is linked to a company, track SyncHistory
   const companyId = job.connector?.companyId;
   if (companyId) {
     // 1. Calculate total records updated in this sync
@@ -243,31 +231,7 @@ async function handleCompleteJob(
     ]);
     const totalRecords = tbCount + ledgerCount + voucherCount;
 
-    // 2. Decoupled Google Sheets export
-    let googleStatus: "SUCCESS" | "FAILED" | "SKIPPED" = "SKIPPED";
-    let googleError: string | null = null;
-
-    const googleConn = await prisma.googleConnection.findUnique({
-      where: { companyId },
-    });
-
-    if (googleConn) {
-      try {
-        const sheetRes = await syncCompanyFinancialDataToGoogleSheets(companyId);
-        if (sheetRes.success) {
-          googleStatus = "SUCCESS";
-        } else {
-          googleStatus = "FAILED";
-          googleError = sheetRes.error || "Google Sheets update returned unsuccessful status";
-        }
-      } catch (gErr) {
-        googleStatus = "FAILED";
-        googleError = gErr instanceof Error ? gErr.message : String(gErr);
-        request.log.error(gErr, "Decoupled Google Sheets export error");
-      }
-    }
-
-    // 3. Update pending SyncHistory or create a new completed one
+    // 2. Update pending SyncHistory or create a new completed one
     const history = await prisma.syncHistory.findFirst({
       where: {
         companyId,
@@ -284,8 +248,6 @@ async function handleCompleteJob(
           status: "SUCCESS",
           completedAt: new Date(),
           recordsUpdated: totalRecords,
-          googleStatus,
-          googleError,
         },
       });
     } else {
@@ -296,8 +258,6 @@ async function handleCompleteJob(
           status: "SUCCESS",
           completedAt: new Date(),
           recordsUpdated: totalRecords,
-          googleStatus,
-          googleError,
         },
       });
     }
@@ -317,7 +277,7 @@ export async function jobRoutes(app: FastifyInstance): Promise<void> {
     "/sync/start",
     {
       schema: startSyncJobSchema,
-      preHandler: [authenticateUserOrConnector],
+      preHandler: [authenticateConnector],
     },
     handleStartSyncJob
   );

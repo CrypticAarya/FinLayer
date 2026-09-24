@@ -6,7 +6,7 @@ import {
   hashConnectorToken,
   requireConnectorOwnership,
 } from "../auth/connector-auth.js";
-import { authenticateUserOrConnector, requireTenantCompanyAccess } from "../auth/tenant-auth.js";
+import { authenticateSaasApiKey, requireSaasCompanyAccess } from "../auth/saas-auth.js";
 import { PairingStoreManager, type PairingEntry } from "../services/pairing-store.js";
 
 // Re-export PairingEntry for any consumers
@@ -580,10 +580,7 @@ async function handleSelectCompany(
       return reply.status(404).send({ success: false, error: "Paired company not found." });
     }
 
-    const googleConn = await prisma.googleConnection.findUnique({
-      where: { companyId: company.id },
-    });
-    const targetSetupStatus = googleConn ? "ACTIVE" : "WAITING_FOR_GOOGLE";
+    const targetSetupStatus = "ACTIVE";
 
     await prisma.connector.update({
       where: { id },
@@ -642,7 +639,7 @@ async function handleSelectCompany(
     data: {
       companyId: newCompany.id,
       tallyCompanyName: cleanName,
-      setupStatus: "WAITING_FOR_GOOGLE",
+      setupStatus: "ACTIVE",
     },
   });
 
@@ -651,7 +648,7 @@ async function handleSelectCompany(
   return reply.status(200).send({
     success: true,
     companyId: newCompany.id,
-    setupStatus: "WAITING_FOR_GOOGLE",
+    setupStatus: "ACTIVE",
   });
 }
 
@@ -670,7 +667,7 @@ async function handleGeneratePairingCode(
 
   const pairingCode = await PairingStoreManager.getStore().createCode(
     company.id,
-    request.user?.id
+    request.saasApiKey?.name || "API"
   );
 
   request.log.info(
@@ -712,10 +709,7 @@ async function handlePairConnector(
     return reply.status(404).send({ success: false, error: "Paired company not found." });
   }
 
-  const googleConn = await prisma.googleConnection.findUnique({
-    where: { companyId: company.id },
-  });
-  const targetSetupStatus = googleConn ? "ACTIVE" : "WAITING_FOR_GOOGLE";
+  const targetSetupStatus = "ACTIVE";
 
   await prisma.connector.update({
     where: { id },
@@ -746,14 +740,14 @@ async function handleListConnectors(
   request: FastifyRequest,
   reply: FastifyReply
 ): Promise<void> {
-  const user = request.user;
   const connector = request.connector;
+  const saasApiKey = request.saasApiKey;
 
   let allowedCompanyIds: string[] | undefined;
-  if (user && user.role !== "SUPER_ADMIN") {
-    allowedCompanyIds = (request.userMemberships ?? []).map((m) => m.companyId);
-  } else if (connector) {
+  if (connector) {
     allowedCompanyIds = connector.companyId ? [connector.companyId] : [];
+  } else if (saasApiKey) {
+    allowedCompanyIds = [saasApiKey.companyId];
   }
 
   const connectors = await prisma.connector.findMany({
@@ -779,12 +773,42 @@ async function handleListConnectors(
   });
 }
 
+/**
+ * Fastify preHandler hook accepting either connector Bearer token or SaaS API key.
+ */
+async function authenticateConnectorOrSaas(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> {
+  const authHeader = request.headers.authorization;
+  const xApiKey = request.headers["x-api-key"];
+
+  if (
+    authHeader &&
+    (authHeader.startsWith("Bearer ct_") || authHeader.startsWith("Bearer fl_conn_"))
+  ) {
+    return authenticateConnector(request, reply);
+  }
+
+  if (
+    (typeof xApiKey === "string" && xApiKey.trim()) ||
+    (authHeader && authHeader.startsWith("Bearer fl_live_"))
+  ) {
+    return authenticateSaasApiKey(request, reply);
+  }
+
+  return reply.status(401).send({
+    success: false,
+    error: "Unauthorized: Missing or invalid authentication. Provide Bearer ct_<token> or x-api-key fl_live_<key>.",
+  });
+}
+
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
 export async function connectorRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     "/connectors",
-    { preHandler: [authenticateUserOrConnector] },
+    { preHandler: [authenticateConnectorOrSaas] },
     handleListConnectors
   );
 
@@ -870,6 +894,29 @@ export async function connectorRoutes(app: FastifyInstance): Promise<void> {
     handleGetTallyCompanies
   );
 
+async function handleGetTallyStatus(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> {
+  const connector = request.connector;
+  if (!connector) {
+    return reply.status(401).send({ success: false, error: "Unauthorized: Connector authentication required." });
+  }
+  return reply.status(200).send({
+    success: true,
+    connectorId: connector.id,
+    setupStatus: connector.setupStatus,
+    status: connector.status,
+    tallyCompanyName: connector.tallyCompanyName,
+  });
+}
+
+  app.get(
+    "/connectors/tally-status",
+    { preHandler: [authenticateConnector] },
+    handleGetTallyStatus
+  );
+
   app.post<{ Params: { id: string }; Body: SelectCompanyBody }>(
     "/connectors/:id/company",
     {
@@ -877,6 +924,18 @@ export async function connectorRoutes(app: FastifyInstance): Promise<void> {
       preHandler: [authenticateConnector, requireConnectorOwnership("id")],
     },
     handleSelectCompany
+  );
+
+  app.post<{ Body: SelectCompanyBody }>(
+    "/connectors/select-company",
+    {
+      schema: { body: selectCompanySchema.body },
+      preHandler: [authenticateConnector],
+    },
+    async (request, reply) => {
+      const id = request.connector.id;
+      return handleSelectCompany({ ...request, params: { id } } as any, reply);
+    }
   );
 
   // ── Pairing Architecture Endpoints ──
@@ -893,7 +952,7 @@ export async function connectorRoutes(app: FastifyInstance): Promise<void> {
           },
         },
       },
-      preHandler: [authenticateUserOrConnector, requireTenantCompanyAccess()],
+      preHandler: [authenticateSaasApiKey, requireSaasCompanyAccess],
     },
     handleGeneratePairingCode
   );

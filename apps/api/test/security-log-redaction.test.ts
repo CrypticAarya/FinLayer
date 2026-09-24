@@ -5,6 +5,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import dotenv from "dotenv";
+import { generateSaasApiKey } from "../src/auth/saas-auth.js";
 
 dotenv.config();
 
@@ -37,34 +38,24 @@ async function runSecurityLogRedactionTests() {
   const timestamp = Date.now();
   const companyName = `Log Audit Co ${timestamp}`;
   let companyId: string;
-  let userId: string;
-  let userToken: string;
+  let saasApiKey: string;
   let connectorId: string;
   let connectorToken: string;
   let generatedPairingCode: string;
 
   try {
     // ─── SETUP ───────────────────────────────────────────────────────────────
-    console.log("[Setup] Creating Tenant Company and User...");
+    console.log("[Setup] Creating Tenant Company and SaaS Key...");
     const company = await prisma.company.create({
       data: { name: companyName, tallyCompanyName: companyName },
     });
     companyId = company.id;
 
-    const sessionRes = await app.inject({
-      method: "POST",
-      url: "/auth/session",
-      payload: {
-        email: `audit-user-${timestamp}@logaudit.com`,
-        name: "Audit User",
-        companyId,
-        role: "OWNER",
-      },
+    const keyData = await generateSaasApiKey({
+      companyId,
+      name: "Audit SaaS App",
     });
-    assert.equal(sessionRes.statusCode, 200);
-    const sessionData = sessionRes.json();
-    userId = sessionData.user.id;
-    userToken = sessionData.token;
+    saasApiKey = keyData.apiKey;
 
     console.log("  ✔ Setup complete.\n");
 
@@ -75,7 +66,7 @@ async function runSecurityLogRedactionTests() {
     const pairGenRes = await app.inject({
       method: "POST",
       url: `/companies/${companyId}/pairing-code`,
-      headers: { authorization: `Bearer ${userToken}` },
+      headers: { "x-api-key": saasApiKey },
     });
 
     assert.equal(pairGenRes.statusCode, 200, "Pairing code generation must succeed");
@@ -154,7 +145,7 @@ async function runSecurityLogRedactionTests() {
     console.log("  ✔ Test 2 Passed: Connector pairing logs do not leak pairing codes.\n");
 
     // ─── TEST 3: Tokens and Sensitive Credentials Never Leak in Logs ───────────
-    console.log("[Test 3] Verifying connector tokens and session tokens are never leaked in logs...");
+    console.log("[Test 3] Verifying connector tokens and SaaS API keys are never leaked in logs...");
     const allLogsCombined = capturedLogChunks.join("\n");
 
     // Connector token should never be in the logs
@@ -163,13 +154,13 @@ async function runSecurityLogRedactionTests() {
       "CRITICAL LEAK: Connector plaintext token was found in logs!"
     );
 
-    // User session token should never be in the logs
+    // SaaS API key should never be in the logs
     assert.ok(
-      !allLogsCombined.includes(userToken),
-      "CRITICAL LEAK: User session token was found in logs!"
+      !allLogsCombined.includes(saasApiKey),
+      "CRITICAL LEAK: SaaS API key was found in logs!"
     );
 
-    console.log("  ✔ Test 3 Passed: Zero connector tokens or user session tokens found in logs.\n");
+    console.log("  ✔ Test 3 Passed: Zero connector tokens or SaaS API keys found in logs.\n");
 
     console.log("===================================================================");
     console.log("   ALL LOG SECURITY & ZERO-LEAKAGE TESTS PASSED (100% SUCCESS)    ");
@@ -182,12 +173,8 @@ async function runSecurityLogRedactionTests() {
         await prisma.syncJob.deleteMany({ where: { connectorId } });
         await prisma.connector.deleteMany({ where: { id: connectorId } });
       }
-      if (userId!) {
-        await prisma.userSession.deleteMany({ where: { userId } });
-        await prisma.companyMember.deleteMany({ where: { userId } });
-        await prisma.user.deleteMany({ where: { id: userId } });
-      }
       if (companyId!) {
+        await prisma.apiKey.deleteMany({ where: { companyId } });
         await prisma.company.deleteMany({ where: { id: companyId } });
       }
     } catch (cleanErr) {

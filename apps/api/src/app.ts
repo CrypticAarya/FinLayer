@@ -4,9 +4,6 @@ import { syncRoutes } from "./routes/sync.js";
 import { connectorRoutes } from "./routes/connectors.js";
 import { jobRoutes } from "./routes/jobs.js";
 import { v1Routes } from "./routes/v1/index.js";
-import { dashboardRoutes } from "./routes/dashboard.js";
-import { googleRoutes } from "./routes/google.js";
-import { exportRoutes } from "./routes/export.js";
 import { saasApiRoutes } from "./routes/saas-api.js";
 import { docsRoutes } from "./routes/docs.js";
 import { healthRoutes } from "./routes/health.js";
@@ -16,13 +13,9 @@ export const SENSITIVE_LOG_REDACT_PATHS = [
   "pairingCode",
   "token",
   "apiKey",
-  "userSessionToken",
-  "sessionToken",
   "refreshToken",
   "accessToken",
   "req.headers.authorization",
-  "req.headers['x-user-token']",
-  "req.headers['x-admin-key']",
   "req.headers['x-api-key']",
   "*.pairingCode",
   "*.token",
@@ -124,9 +117,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(connectorRoutes);
   await app.register(jobRoutes);
   await app.register(v1Routes, { prefix: "/v1" });
-  await app.register(dashboardRoutes);
-  await app.register(googleRoutes);
-  await app.register(exportRoutes);
   await app.register(saasApiRoutes, { prefix: "/api/v1" });
   await app.register(docsRoutes);
 

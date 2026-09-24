@@ -4,7 +4,7 @@ import {
   authenticateSaasApiKey,
   requireSaasCompanyAccess,
 } from "../auth/saas-auth.js";
-import { validateDateRange } from "../services/canonical-export-service.js";
+import { validateDateRange } from "../utils/date-validation.js";
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
@@ -33,6 +33,10 @@ interface TrialBalanceQuery {
   fromDate?: string;
   toDate?: string;
   asOfDate?: string;
+}
+
+interface TriggerSyncBody {
+  type?: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -247,8 +251,8 @@ async function handleGetTrialBalance(
       (a, b) => a.groupName.localeCompare(b.groupName) || a.ledgerName.localeCompare(b.ledgerName)
     );
 
-    const debitTotal = Math.round(tbEntries.reduce((sum, e) => sum + e.debitAmount, 0) * 100) / 100;
-    const creditTotal = Math.round(tbEntries.reduce((sum, e) => sum + e.creditAmount, 0) * 100) / 100;
+    const debitTotal = Math.round(tbEntries.reduce((sum: number, e: { debitAmount: number }) => sum + e.debitAmount, 0) * 100) / 100;
+    const creditTotal = Math.round(tbEntries.reduce((sum: number, e: { creditAmount: number }) => sum + e.creditAmount, 0) * 100) / 100;
 
     return reply.status(200).send({
       success: true,
@@ -280,8 +284,8 @@ async function handleGetTrialBalance(
   });
 
   if (tbRecords.length > 0) {
-    const debitTotal = Math.round(tbRecords.reduce((sum, e) => sum + e.debitAmount, 0) * 100) / 100;
-    const creditTotal = Math.round(tbRecords.reduce((sum, e) => sum + e.creditAmount, 0) * 100) / 100;
+    const debitTotal = Math.round(tbRecords.reduce((sum: number, e: { debitAmount: number }) => sum + e.debitAmount, 0) * 100) / 100;
+    const creditTotal = Math.round(tbRecords.reduce((sum: number, e: { creditAmount: number }) => sum + e.creditAmount, 0) * 100) / 100;
 
     return reply.status(200).send({
       success: true,
@@ -360,8 +364,8 @@ async function handleGetTrialBalance(
     (a, b) => a.groupName.localeCompare(b.groupName) || a.ledgerName.localeCompare(b.ledgerName)
   );
 
-  const debitTotal = Math.round(tbEntries.reduce((sum, e) => sum + e.debitAmount, 0) * 100) / 100;
-  const creditTotal = Math.round(tbEntries.reduce((sum, e) => sum + e.creditAmount, 0) * 100) / 100;
+  const debitTotal = Math.round(tbEntries.reduce((sum: number, e: { debitAmount: number }) => sum + e.debitAmount, 0) * 100) / 100;
+  const creditTotal = Math.round(tbEntries.reduce((sum: number, e: { creditAmount: number }) => sum + e.creditAmount, 0) * 100) / 100;
 
   return reply.status(200).send({
     success: true,
@@ -598,14 +602,105 @@ async function handleGetSyncStatus(
     ? latestSync.recordsProcessed || (latestSync.recordsCreated + latestSync.recordsUpdated)
     : 0;
 
+  // 1. Check for pending or in-progress sync job for this company
+  const pendingJob = await prisma.syncJob.findFirst({
+    where: {
+      connector: { companyId },
+      status: { in: ["PENDING", "QUEUED"] },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  // 2. Check for last successful sync (from syncRun or syncHistory)
+  const lastSuccessRun = await prisma.syncRun.findFirst({
+    where: { companyId, status: "SYNC_COMPLETED" },
+    orderBy: { completedAt: "desc" },
+  });
+
+  const lastSuccessHistory = !lastSuccessRun
+    ? await prisma.syncHistory.findFirst({
+        where: { companyId, status: "SUCCESS" },
+        orderBy: { completedAt: "desc" },
+      })
+    : null;
+
+  // 3. Check for last failed sync (from syncRun or syncHistory)
+  const lastFailedRun = await prisma.syncRun.findFirst({
+    where: { companyId, status: "SYNC_FAILED" },
+    orderBy: { startedAt: "desc" },
+  });
+
+  const lastFailedHistory = !lastFailedRun
+    ? await prisma.syncHistory.findFirst({
+        where: { companyId, status: "FAILED" },
+        orderBy: { createdAt: "desc" },
+      })
+    : null;
+
+  let currentSyncStatus = "IDLE";
+  if (pendingJob) {
+    currentSyncStatus = "QUEUED";
+  } else if (
+    latestSync &&
+    ["SYNC_STARTED", "SYNC_VALIDATING", "SYNC_PROCESSING"].includes(latestSync.status)
+  ) {
+    currentSyncStatus = "IN_PROGRESS";
+  } else if (latestSync) {
+    currentSyncStatus = latestSync.status === "SYNC_COMPLETED" ? "IDLE" : latestSync.status;
+  }
+
+  const lastSuccessfulSync = lastSuccessRun
+    ? {
+        syncRunId: lastSuccessRun.id,
+        syncType: lastSuccessRun.syncType,
+        completedAt: lastSuccessRun.completedAt ? lastSuccessRun.completedAt.toISOString() : null,
+        recordsProcessed:
+          lastSuccessRun.recordsProcessed ||
+          lastSuccessRun.recordsCreated + lastSuccessRun.recordsUpdated,
+      }
+    : lastSuccessHistory
+    ? {
+        syncRunId: lastSuccessHistory.id,
+        syncType: lastSuccessHistory.syncType,
+        completedAt: lastSuccessHistory.completedAt
+          ? lastSuccessHistory.completedAt.toISOString()
+          : null,
+        recordsProcessed: lastSuccessHistory.recordsUpdated,
+      }
+    : null;
+
+  const lastFailedSync = lastFailedRun
+    ? {
+        syncRunId: lastFailedRun.id,
+        syncType: lastFailedRun.syncType,
+        failedAt: lastFailedRun.completedAt
+          ? lastFailedRun.completedAt.toISOString()
+          : lastFailedRun.startedAt.toISOString(),
+        errorSummary: lastFailedRun.errorSummary,
+      }
+    : lastFailedHistory
+    ? {
+        syncRunId: lastFailedHistory.id,
+        syncType: lastFailedHistory.syncType,
+        failedAt: lastFailedHistory.completedAt
+          ? lastFailedHistory.completedAt.toISOString()
+          : lastFailedHistory.startedAt.toISOString(),
+        errorSummary: "Sync failed during execution",
+      }
+    : null;
+
   return reply.status(200).send({
     success: true,
     data: {
       companyId: company.id,
+      currentSyncStatus,
+      syncStatus: currentSyncStatus,
       connectorStatus,
       lastSyncTime,
       lastSyncResult,
       recordsProcessed,
+      lastSuccessfulSync,
+      lastFailedSync,
       connector: latestConnector
         ? {
             id: latestConnector.id,
@@ -634,6 +729,72 @@ async function handleGetSyncStatus(
           }
         : null,
     },
+  });
+}
+
+/**
+ * 6. POST /api/v1/companies/:companyId/sync
+ * Trigger an asynchronous sync job for the company's connector.
+ */
+async function handleTriggerSync(
+  request: FastifyRequest<{ Params: CompanyParams; Body?: TriggerSyncBody }>,
+  reply: FastifyReply
+): Promise<void> {
+  const { companyId } = request.params;
+  const rawType = request.body?.type;
+  const validTypes = ["FINANCIAL_DATA", "LEDGERS", "VOUCHERS", "TRIAL_BALANCE", "BOTH"];
+  const syncType = rawType && validTypes.includes(rawType.toUpperCase())
+    ? rawType.toUpperCase()
+    : "FINANCIAL_DATA";
+
+  // 1. Find connector for this company (prefer ONLINE, fallback to most recent)
+  let connector = await prisma.connector.findFirst({
+    where: { companyId, status: "ONLINE" },
+    orderBy: { lastHeartbeat: "desc" },
+  });
+
+  if (!connector) {
+    connector = await prisma.connector.findFirst({
+      where: { companyId },
+      orderBy: { lastHeartbeat: "desc" },
+    });
+  }
+
+  if (!connector) {
+    return reply.status(404).send({
+      success: false,
+      error: `No connector found for company "${companyId}". Ensure a connector is registered and paired.`,
+    });
+  }
+
+  // 2. Create SyncJob with status PENDING
+  const job = await prisma.syncJob.create({
+    data: {
+      connectorId: connector.id,
+      type: syncType,
+      status: "PENDING",
+    },
+  });
+
+  // 3. Record in SyncHistory
+  await prisma.syncHistory.create({
+    data: {
+      companyId,
+      syncType,
+      status: "IN_PROGRESS",
+    },
+  });
+
+  request.log.info(
+    { jobId: job.id, connectorId: connector.id, type: syncType, companyId },
+    "SaaS triggered sync job created"
+  );
+
+  return reply.status(200).send({
+    success: true,
+    syncJobId: job.id,
+    jobId: job.id,
+    status: "QUEUED",
   });
 }
 
@@ -676,5 +837,12 @@ export async function saasApiRoutes(app: FastifyInstance): Promise<void> {
     "/companies/:companyId/sync-status",
     { preHandler: [requireSaasCompanyAccess] },
     handleGetSyncStatus
+  );
+
+  // 6. POST /api/v1/companies/:companyId/sync
+  app.post<{ Params: CompanyParams; Body?: TriggerSyncBody }>(
+    "/companies/:companyId/sync",
+    { preHandler: [requireSaasCompanyAccess] },
+    handleTriggerSync
   );
 }

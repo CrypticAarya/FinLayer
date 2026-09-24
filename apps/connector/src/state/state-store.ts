@@ -56,7 +56,6 @@ export interface ConnectorState {
     | "REGISTERED"
     | "TALLY_CONNECTED"
     | "WAITING_FOR_COMPANY"
-    | "WAITING_FOR_GOOGLE"
     | "ACTIVE";
 }
 

@@ -1,6 +1,32 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import prisma from "../../db/prisma.js";
 import { authenticateApiKey } from "../../auth/api-key.js";
+import type { Ledger, TrialBalanceEntry, Prisma } from "@prisma/client";
+
+type MappingWithCompany = Prisma.SaasCompanyMappingGetPayload<{
+  include: {
+    company: {
+      include: {
+        connectors: {
+          orderBy: { lastHeartbeat: "desc" };
+          take: 1;
+        };
+      };
+    };
+  };
+}>;
+
+type VoucherWithEntries = Prisma.VoucherGetPayload<{
+  include: {
+    voucherEntries: {
+      include: {
+        ledger: true;
+      };
+    };
+  };
+}>;
+
+type VoucherEntryItem = VoucherWithEntries["voucherEntries"][number];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -159,7 +185,7 @@ async function handleGetCompanies(
     orderBy: { createdAt: "asc" },
   });
 
-  const companies: CompanyDto[] = mappings.map((m) => {
+  const companies: CompanyDto[] = mappings.map((m: MappingWithCompany) => {
     const latestConnector = m.company.connectors[0] ?? null;
 
     const companyDto: CompanyDto = {
@@ -217,7 +243,7 @@ async function handleGetCompanyLedgers(
     ],
   });
 
-  const ledgerDtos: LedgerDto[] = ledgers.map((l) => ({
+  const ledgerDtos: LedgerDto[] = ledgers.map((l: Ledger) => ({
     id: l.id,
     name: l.name,
     parent: l.parent,
@@ -276,14 +302,14 @@ async function handleGetCompanyVouchers(
     ],
   });
 
-  const voucherDtos: VoucherDto[] = vouchers.map((v) => {
+  const voucherDtos: VoucherDto[] = vouchers.map((v: VoucherWithEntries) => {
     const voucherDto: VoucherDto = {
       id: v.id,
       voucherNumber: v.voucherNumber,
       voucherType: v.voucherType,
       date: v.date.toISOString(),
       amount: Number(v.amount),
-      entries: v.voucherEntries.map((e) => ({
+      entries: v.voucherEntries.map((e: VoucherEntryItem) => ({
         ledgerId: e.ledgerId,
         ledgerName: e.ledger.name,
         amount: Number(e.amount),
@@ -339,12 +365,12 @@ async function handleGetCompanyTrialBalance(
     ],
   });
 
-  const debitTotal = entries.reduce((sum, e) => sum + e.debitAmount, 0);
-  const creditTotal = entries.reduce((sum, e) => sum + e.creditAmount, 0);
+  const debitTotal = entries.reduce((sum: number, e: TrialBalanceEntry) => sum + e.debitAmount, 0);
+  const creditTotal = entries.reduce((sum: number, e: TrialBalanceEntry) => sum + e.creditAmount, 0);
 
   return reply.status(200).send({
     companyId,
-    trialBalance: entries.map((e) => ({
+    trialBalance: entries.map((e: TrialBalanceEntry) => ({
       id: e.id,
       ledgerName: e.ledgerName,
       groupName: e.groupName,

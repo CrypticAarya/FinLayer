@@ -25,9 +25,7 @@ model Company {
   connectors          Connector[]
   mappings            SaasCompanyMapping[]
   trialBalanceEntries TrialBalanceEntry[]
-  googleConnection    GoogleConnection?
   syncHistories       SyncHistory[]
-  members             CompanyMember[]
   apiKeys             ApiKey[]
 }
 
@@ -279,20 +277,6 @@ model TrialBalanceEntry {
   @@index([companyId])
 }
 
-// ─── Google Sheets Models ───────────────────────────────────────────────────
-
-model GoogleConnection {
-  id             String   @id @default(cuid())
-  companyId      String   @unique
-  googleEmail    String
-  refreshToken   String   // encrypted AES-256
-  spreadsheetId  String
-  spreadsheetUrl String
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  company Company @relation(fields: [companyId], references: [id])
-}
 
 // ─── Sync History Models ───────────────────────────────────────────────────
 
@@ -304,8 +288,6 @@ model SyncHistory {
   startedAt      DateTime  @default(now())
   completedAt    DateTime?
   recordsUpdated Int       @default(0)
-  googleStatus   String?   // "SUCCESS" | "FAILED" | "SKIPPED"
-  googleError    String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -315,50 +297,6 @@ model SyncHistory {
   @@index([companyId, createdAt])
 }
 
-// ─── User & Dashboard Identity Models ───────────────────────────────────────
 
-model User {
-  id           String          @id @default(cuid())
-  email        String          @unique
-  name         String
-  passwordHash String?
-  role         String          @default("USER") // "SUPER_ADMIN" | "USER"
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
-
-  memberships  CompanyMember[]
-  sessions     UserSession[]
-
-  @@index([email])
-}
-
-model CompanyMember {
-  id        String   @id @default(cuid())
-  userId    String
-  companyId String
-  role      String   @default("MEMBER") // "OWNER" | "ADMIN" | "MEMBER" | "VIEWER"
-  createdAt DateTime @default(now())
-
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, companyId])
-  @@index([userId])
-  @@index([companyId])
-}
-
-model UserSession {
-  id         String    @id @default(cuid())
-  userId     String
-  tokenHash  String    @unique
-  expiresAt  DateTime
-  createdAt  DateTime  @default(now())
-  lastUsedAt DateTime  @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([tokenHash])
-  @@index([userId])
-}
 
 

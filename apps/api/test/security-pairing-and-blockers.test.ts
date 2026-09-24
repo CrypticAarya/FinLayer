@@ -5,6 +5,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import dotenv from "dotenv";
 import { PairingStoreManager, MemoryPairingStore } from "../src/services/pairing-store.js";
+import { generateSaasApiKey } from "../src/auth/saas-auth.js";
 
 dotenv.config();
 
@@ -33,8 +34,8 @@ async function runPairingAndBlockersSecurityTests() {
 
   let companyAId: string;
   let companyBId: string;
-  let userAToken: string;
-  let userBToken: string;
+  let saasKeyA: string;
+  let saasKeyB: string;
   let connectorAId: string;
   let tokenA: string;
   let connectorBId: string;
@@ -55,33 +56,19 @@ async function runPairingAndBlockersSecurityTests() {
     });
     companyBId = companyB.id;
 
-    // Create session for User A (Member of Company A)
-    const sessionResA = await app.inject({
-      method: "POST",
-      url: "/auth/session",
-      payload: {
-        email: `user-a-${timestamp}@companya.com`,
-        name: "User A",
-        companyId: companyAId,
-        role: "OWNER",
-      },
+    // Issue SaaS API key for Tenant A
+    const keyDataA = await generateSaasApiKey({
+      companyId: companyAId,
+      name: "SaaS App Tenant A",
     });
-    assert.equal(sessionResA.statusCode, 200);
-    userAToken = sessionResA.json().token;
+    saasKeyA = keyDataA.apiKey;
 
-    // Create session for User B (Member of Company B)
-    const sessionResB = await app.inject({
-      method: "POST",
-      url: "/auth/session",
-      payload: {
-        email: `user-b-${timestamp}@companyb.com`,
-        name: "User B",
-        companyId: companyBId,
-        role: "OWNER",
-      },
+    // Issue SaaS API key for Tenant B
+    const keyDataB = await generateSaasApiKey({
+      companyId: companyBId,
+      name: "SaaS App Tenant B",
     });
-    assert.equal(sessionResB.statusCode, 200);
-    userBToken = sessionResB.json().token;
+    saasKeyB = keyDataB.apiKey;
 
     // Register Connector A (Initially bound to Company A for sync tests)
     const regA = await app.inject({
@@ -151,26 +138,26 @@ async function runPairingAndBlockersSecurityTests() {
     });
     assert.equal(noAuthPairRes.statusCode, 401, "Unauthenticated pairing code generation must return 401");
 
-    // 1.2b: Cross-tenant attempt (User B trying to generate code for Company A)
+    // 1.2b: Cross-tenant attempt (SaaS Tenant B trying to generate code for Company A)
     const crossTenantPairRes = await app.inject({
       method: "POST",
       url: `/companies/${companyAId}/pairing-code`,
-      headers: { authorization: `Bearer ${userBToken}` },
+      headers: { "x-api-key": saasKeyB },
     });
     assert.equal(crossTenantPairRes.statusCode, 403, "Cross-tenant pairing code generation must return 403");
 
-    // 1.2c: Authorized User A generates pairing code for Company A
+    // 1.2c: Authorized SaaS Tenant A generates pairing code for Company A
     const authPairRes = await app.inject({
       method: "POST",
       url: `/companies/${companyAId}/pairing-code`,
-      headers: { authorization: `Bearer ${userAToken}` },
+      headers: { "x-api-key": saasKeyA },
     });
     assert.equal(authPairRes.statusCode, 200);
     const pairingData = authPairRes.json();
     assert.equal(pairingData.success, true);
     assert.match(pairingData.pairingCode, /^FL-[A-F0-9]{6}$/, "Pairing code must follow FL-XXXXXX format");
     const validPairingCode = pairingData.pairingCode;
-    console.log(`  ✔ Test 1.2 Passed: User A successfully generated pairing code (FL-XXXXXX).`);
+    console.log(`  ✔ Test 1.2 Passed: SaaS Key A successfully generated pairing code (FL-XXXXXX).`);
 
     console.log("[Test 1.3] Connector pairing with valid pairing code succeeds...");
     const pairRes = await app.inject({
@@ -255,38 +242,6 @@ async function runPairingAndBlockersSecurityTests() {
     tokenA = newRawToken;
     console.log("  ✔ Re-authenticated Connector A with fresh token.\n");
 
-    // ─── PRIORITY 3: PRODUCTION GOOGLE DEMO ROUTE HARDENING ───────────────────
-    console.log("[Test 3.1] Demo and mock Google routes in production mode return 403...");
-    const originalNodeEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = "production";
-
-    try {
-      // 3.1a: POST /google/demo-connect/:companyId in production
-      const demoConnRes = await app.inject({
-        method: "POST",
-        url: `/google/demo-connect/${companyAId}`,
-      });
-      assert.equal(demoConnRes.statusCode, 403, "demo-connect must return 403 in production");
-
-      // 3.1b: GET /google/mock-sheet/:spreadsheetId in production
-      const mockSheetRes = await app.inject({
-        method: "GET",
-        url: "/google/mock-sheet/mock-spreadsheet-123",
-      });
-      assert.equal(mockSheetRes.statusCode, 403, "mock-sheet must return 403 in production");
-
-      // 3.1c: GET /google/callback with mock=true in production
-      const mockCallbackRes = await app.inject({
-        method: "GET",
-        url: `/google/callback?state=${companyAId}&mock=true`,
-      });
-      assert.equal(mockCallbackRes.statusCode, 403, "mock callback must return 403 in production");
-
-      console.log("  ✔ Test 3.1 Passed: All mock and demo backdoors strictly blocked in production.");
-    } finally {
-      process.env.NODE_ENV = originalNodeEnv;
-    }
-
     // ─── PRIORITY 5: SYNC AUTHORIZATION & ENDPOINT HARDENING ───────────────────
     console.log("\n[Test 4.1] Unauthenticated POST /sync/start fails with 401 Unauthorized...");
     const unauthSyncStart = await app.inject({
@@ -314,19 +269,18 @@ async function runPairingAndBlockersSecurityTests() {
     assert.equal(crossConnSyncStart.statusCode, 403, "Cross-connector sync triggering must return 403");
     console.log("  ✔ Test 4.2 Passed: Connector B blocked from triggering sync for Connector A.");
 
-    console.log("[Test 4.3] Cross-tenant User sync triggering is rejected with 403 Forbidden...");
-    // User B attempts to start sync job for Connector A (Company A)
-    const crossUserSyncStart = await app.inject({
+    console.log("[Test 4.3] Invalid token sync triggering is rejected with 401 Unauthorized...");
+    const badTokenSyncStart = await app.inject({
       method: "POST",
       url: "/sync/start",
-      headers: { authorization: `Bearer ${userBToken}` },
+      headers: { authorization: "Bearer ct_invalid_token" },
       payload: {
         connectorId: connectorAId,
         type: "FINANCIAL_DATA",
       },
     });
-    assert.equal(crossUserSyncStart.statusCode, 403, "Cross-tenant user sync start must return 403");
-    console.log("  ✔ Test 4.3 Passed: User B blocked from triggering sync for Connector A.");
+    assert.equal(badTokenSyncStart.statusCode, 401, "Invalid token sync start must return 401");
+    console.log("  ✔ Test 4.3 Passed: Invalid token rejected with 401.");
 
     console.log("[Test 4.4] Authorized Connector A triggers sync job successfully (200 OK)...");
     const authSyncStart = await app.inject({
@@ -386,7 +340,7 @@ async function runPairingAndBlockersSecurityTests() {
     await prisma.connector.deleteMany({
       where: { id: { in: [connectorAId, connectorBId, unlinkedConnectorId].filter(Boolean) } },
     });
-    await prisma.companyMember.deleteMany({
+    await prisma.apiKey.deleteMany({
       where: { companyId: { in: [companyAId, companyBId].filter(Boolean) } },
     });
     await prisma.company.deleteMany({

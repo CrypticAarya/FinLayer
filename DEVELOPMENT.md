@@ -92,7 +92,7 @@ Releases are fully automated through GitHub Actions and GitHub Releases. Existin
   Update Ready (v1.0.1) [Restart & Install]
   ```
 - **State Preservation Guarantee**:
-  - All user configurations, connector state, device IDs, company mappings, and Google OAuth tokens are permanently stored in `%APPDATA%/FinLayer/` (`connector-state.json`).
+  - All user configurations, connector state, device IDs, and company mappings are permanently stored in `%APPDATA%/FinLayer/` (`connector-state.json`).
   - The installer explicitly sets `deleteAppDataOnUninstall: false` and never touches `%APPDATA%/FinLayer/` during updates or reinstallations.
 
 ---

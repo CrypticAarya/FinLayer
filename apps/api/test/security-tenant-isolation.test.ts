@@ -3,7 +3,6 @@ import Fastify from "fastify";
 import { syncRoutes } from "../src/routes/sync.js";
 import { connectorRoutes } from "../src/routes/connectors.js";
 import { jobRoutes } from "../src/routes/jobs.js";
-import { dashboardRoutes } from "../src/routes/dashboard.js";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
@@ -24,7 +23,6 @@ async function runTenantIsolationTests() {
   await app.register(connectorRoutes);
   await app.register(syncRoutes);
   await app.register(jobRoutes);
-  await app.register(dashboardRoutes);
   await app.ready();
 
   const timestamp = Date.now();
@@ -193,25 +191,6 @@ async function runTenantIsolationTests() {
     assert.equal(vA.companyId, companyAId);
     console.log("  ✔ Case 1 Passed: Company A connector successfully ingested data into Company A (200 OK).");
 
-    // ── CASE 2: Company A Connector Attempts Cross-Tenant Read on Company B ─
-    console.log("\n[Case 2] Connector A attempts to read Company B financial summary...");
-    const crossReadRes = await app.inject({
-      method: "GET",
-      url: `/dashboard/financial-summary/${companyBId}`,
-      headers: {
-        authorization: `Bearer ${tokenA}`,
-      },
-    });
-
-    assert.equal(
-      crossReadRes.statusCode,
-      403,
-      "Connector A reading Company B financial summary must return 403 Forbidden"
-    );
-    const crossReadData = crossReadRes.json();
-    assert.equal(crossReadData.success, false);
-    assert.match(crossReadData.error, /Forbidden/i);
-    console.log("  ✔ Case 2 Passed: Cross-tenant read rejected with 403 Forbidden.");
 
     // ── CASE 3: Company A Connector Attempts Cross-Tenant Write into Company B
     console.log("\n[Case 3] Connector A attempts to sync vouchers into Company B (IDOR Write)...");
@@ -338,25 +317,8 @@ async function runTenantIsolationTests() {
     assert.equal(unchangedJob?.status, "PENDING", "Job status must remain PENDING");
     console.log("  ✔ Case 6 Passed: Cross-connector job tampering rejected with 403 Forbidden.");
 
-    // ── CASE 7: Connector A Cannot Query Company B Vouchers in Dashboard ────
-    console.log("\n[Case 7] Connector A attempts to query Company B vouchers via dashboard API...");
-    const dashboardVoucherRes = await app.inject({
-      method: "GET",
-      url: `/dashboard/data/vouchers?companyId=${companyBId}`,
-      headers: {
-        authorization: `Bearer ${tokenA}`,
-      },
-    });
-
-    assert.equal(
-      dashboardVoucherRes.statusCode,
-      403,
-      "Connector A querying Company B vouchers must return 403 Forbidden"
-    );
-    console.log("  ✔ Case 7 Passed: Cross-tenant dashboard data access rejected with 403 Forbidden.");
-
     console.log("\n===================================================================");
-    console.log("   ALL 7 TENANT ISOLATION & IDOR TESTS PASSED WITH 100% SUCCESS!   ");
+    console.log("   ALL 5 TENANT ISOLATION & IDOR TESTS PASSED WITH 100% SUCCESS!   ");
     console.log("===================================================================\n");
   } finally {
     // ── Cleanup ─────────────────────────────────────────────────────────────

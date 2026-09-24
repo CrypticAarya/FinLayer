@@ -1,9 +1,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import prisma from "../db/prisma.js";
-import { AccountingValidationService } from "../services/accounting-validation-service.js";
+import { AccountingValidationService, type ResolvedVoucherEntry } from "../services/accounting-validation-service.js";
 import { SyncAuditService } from "../services/sync-audit-service.js";
 import { authenticateConnector } from "../auth/connector-auth.js";
 import { requireCompanyOwnership } from "../auth/tenant-auth.js";
+import type { Prisma } from "@prisma/client";
 
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -320,7 +321,7 @@ async function handleSyncVouchers(
     }
 
     // Pre-fetch existing vouchers for this batch by masterId to eliminate N queries
-    const masterIds = vouchers.map((v) => v.masterId);
+    const masterIds = vouchers.map((v: VoucherInput) => v.masterId);
     const existingVouchers = await prisma.voucher.findMany({
       where: {
         companyId: company.id,
@@ -398,7 +399,7 @@ async function handleSyncVouchers(
 
         // Case 1: Voucher does not exist -> Create atomically
         if (!existing) {
-          await prisma.$transaction(async (tx) => {
+          await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
             const voucher = await tx.voucher.create({
               data: {
                 companyId: company.id,
@@ -415,7 +416,7 @@ async function handleSyncVouchers(
             });
 
             await tx.voucherEntry.createMany({
-              data: resolvedEntries.map((e) => ({
+              data: resolvedEntries.map((e: ResolvedVoucherEntry) => ({
                 voucherId: voucher.id,
                 ledgerId: e.ledgerId,
                 amount: e.amount,
@@ -433,7 +434,7 @@ async function handleSyncVouchers(
         }
         // Case 3: Voucher exists and alterId changed -> Atomic update and entry replacement
         else {
-          await prisma.$transaction(async (tx) => {
+          await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
             const updatedVoucher = await tx.voucher.update({
               where: { id: existing!.id },
               data: {
@@ -453,7 +454,7 @@ async function handleSyncVouchers(
             });
 
             await tx.voucherEntry.createMany({
-              data: resolvedEntries.map((e) => ({
+              data: resolvedEntries.map((e: ResolvedVoucherEntry) => ({
                 voucherId: existing!.id,
                 ledgerId: e.ledgerId,
                 amount: e.amount,
@@ -594,7 +595,7 @@ async function handleSyncTrialBalance(
   }
 
   // ── 3. Atomically replace company's Trial Balance entries in a transaction ──
-  await prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     // a. Delete existing entries belonging strictly to this company
     await tx.trialBalanceEntry.deleteMany({
       where: { companyId: company.id },
@@ -602,7 +603,7 @@ async function handleSyncTrialBalance(
 
     // b. Insert complete incoming snapshot using tx
     await tx.trialBalanceEntry.createMany({
-      data: trialBalance.map((item) => ({
+      data: trialBalance.map((item: TrialBalanceItemInput) => ({
         companyId: company.id,
         ledgerName: item.ledgerName.trim(),
         groupName: item.groupName.trim() || "Primary",

@@ -147,18 +147,22 @@ function resolveInitialApiUrl(): string {
       try {
         const content = JSON.parse(readFileSync(p, "utf-8"));
         if (content.apiUrl && typeof content.apiUrl === "string") {
-          return normalizeUrl(content.apiUrl);
+          if (app.isPackaged && (content.apiUrl.includes("localhost") || content.apiUrl.includes("127.0.0.1"))) {
+            // Ignore stale development localhost URL in packaged production app
+          } else {
+            return normalizeUrl(content.apiUrl);
+          }
         }
       } catch {}
     }
   }
 
-  // 4. Production flag (e.g. FINLAYER_ENV=production)
-  if (process.env.FINLAYER_ENV === "production") {
+  // 4. Packaged production app or environment flag
+  if (app.isPackaged || process.env.FINLAYER_ENV === "production") {
     return PRODUCTION_API_URL;
   }
 
-  // 5. Default API URL (localhost)
+  // 5. Default API URL (development localhost fallback)
   return "http://127.0.0.1:4000";
 }
 
@@ -1202,9 +1206,13 @@ ipcMain.handle("finlayer:trigger-initial-sync", async (_event, companyId?: strin
       console.warn("[INITIAL SYNC] Direct pipeline sync note:", pipelineErr);
       // Fallback: trigger background sync job on API if server is running
       if (state.connectorId) {
+        const token = await tokenStorage.getToken();
         await fetch(`${API_URL}/sync/start`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
           body: JSON.stringify({
             connectorId: state.connectorId,
             type: "FINANCIAL_DATA",
@@ -1248,9 +1256,13 @@ ipcMain.handle("finlayer:complete-setup", async () => {
 
     // Trigger an immediate initial sync job to sync Tally data to FinLayer Cloud API
     try {
+      const token = await tokenStorage.getToken();
       const syncRes = await fetch(`${API_URL}/sync/start`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           connectorId: state.connectorId,
           type: "FINANCIAL_DATA",
@@ -1271,91 +1283,6 @@ ipcMain.handle("finlayer:complete-setup", async () => {
   }
 
   return { success: true };
-});
-
-// 8. Open Dashboard
-ipcMain.handle("finlayer:open-dashboard", async () => {
-  await shell.openExternal(`${API_URL}/dashboard`);
-  return { success: true };
-});
-
-// 8b. Direct Authenticated Download Export (Secure Header-Only Architecture)
-ipcMain.handle("finlayer:download-export", async (_event, { type, format }) => {
-  const cleanType = (type || "vouchers").trim().toLowerCase();
-  const cleanFormat = (format || "csv").trim().toLowerCase();
-
-  if (cleanType !== "vouchers" && cleanType !== "ledgers" && cleanType !== "trial-balance") {
-    return { success: false, error: `Invalid export type "${type}". Supported: vouchers, ledgers, trial-balance.` };
-  }
-  if (cleanFormat !== "csv" && cleanFormat !== "xml") {
-    return { success: false, error: `Invalid export format "${format}". Supported: csv, xml.` };
-  }
-
-  const state = await loadLocalState();
-  if (!state || !state.companyId) {
-    return { success: false, error: "No active company found. Please connect to a company first." };
-  }
-
-  const token = await tokenStorage.getToken();
-  if (!token) {
-    return { success: false, error: "No connector authentication token found. Please register or restart." };
-  }
-
-  const exportUrl = `${API_URL}/dashboard/export/${state.companyId}?type=${cleanType}&format=${cleanFormat}`;
-
-  try {
-    const response = await fetch(exportUrl, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    if (!response.ok) {
-      const errText = await response.text().catch(() => "");
-      let errMsg = `Server returned HTTP ${response.status}`;
-      try {
-        const parsed = JSON.parse(errText);
-        if (parsed.error) errMsg = parsed.error;
-      } catch {}
-      return { success: false, error: errMsg };
-    }
-
-    // Determine safe default filename
-    const disposition = response.headers.get("content-disposition");
-    let filename = `finlayer_${cleanType}.${cleanFormat}`;
-    if (disposition && disposition.includes("filename=")) {
-      const match = disposition.match(/filename=["']?([^"';]+)["']?/i);
-      if (match && match[1]) {
-        filename = match[1].trim();
-      }
-    }
-
-    const defaultPath = path.join(app.getPath("downloads"), filename);
-    const dialogOptions = {
-      title: "Save FinLayer Export",
-      defaultPath,
-      filters: cleanFormat === "csv"
-        ? [{ name: "CSV Files", extensions: ["csv"] }]
-        : [{ name: "XML Files", extensions: ["xml"] }],
-    };
-    const saveResult = mainWindow
-      ? await dialog.showSaveDialog(mainWindow, dialogOptions)
-      : await dialog.showSaveDialog(dialogOptions);
-
-    if (saveResult.canceled || !saveResult.filePath) {
-      return { success: false, error: "Download cancelled by user." };
-    }
-
-    const buffer = Buffer.from(await response.arrayBuffer());
-    await fs.writeFile(saveResult.filePath, buffer);
-    shell.showItemInFolder(saveResult.filePath);
-
-    return { success: true, filePath: saveResult.filePath };
-  } catch (err: any) {
-    console.error("[Export Download] Failed to download export:", err);
-    return { success: false, error: err.message || "Failed to download export." };
-  }
 });
 
 

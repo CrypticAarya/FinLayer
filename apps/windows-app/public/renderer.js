@@ -45,7 +45,6 @@
   const btnContinueSync = document.getElementById("btn-continue-sync");
 
   // Step 5 Elements
-  const btnOpenDashboard = document.getElementById("btn-open-dashboard");
   const footerDevice = document.getElementById("footer-device");
   const footerStatus = document.getElementById("footer-status");
   const footerVersion = document.getElementById("footer-version");
@@ -407,34 +406,6 @@
     }
   }
 
-  btnOpenDashboard.addEventListener("click", async () => {
-    try {
-      await window.finlayer.openDashboard();
-    } catch (err) {
-      alert("Could not open dashboard: " + err.message);
-    }
-  });
-
-  const btnWinDownloadExport = document.getElementById("btn-win-download-export");
-  if (btnWinDownloadExport) {
-    btnWinDownloadExport.addEventListener("click", async () => {
-      const type = document.getElementById("win-export-type")?.value || "vouchers";
-      const format = document.getElementById("win-export-format")?.value || "csv";
-      btnWinDownloadExport.disabled = true;
-      btnWinDownloadExport.textContent = "Opening Export…";
-      try {
-        const res = await window.finlayer.downloadExport(type, format);
-        if (!res.success && res.error) {
-          alert("Export notice: " + res.error);
-        }
-      } catch (err) {
-        alert("Export failed: " + err.message);
-      } finally {
-        btnWinDownloadExport.disabled = false;
-        btnWinDownloadExport.textContent = "📥 Download Export";
-      }
-    });
-  }
 
   // ── Auto-Update Handlers ───────────────────────────────────────────────────
   if (btnRestartUpdate) {

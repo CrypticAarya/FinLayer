@@ -2,6 +2,9 @@
   "name": "finlayer-root",
   "private": true,
   "scripts": {
+    "typecheck": "npm --prefix apps/api run typecheck && npm --prefix apps/connector run typecheck",
+    "build": "npm --prefix apps/api run build && npm --prefix apps/connector run build",
+    "test": "npm --prefix apps/api run test",
     "dev:app": "npm --prefix apps/windows-app run dev",
     "build:app": "npm --prefix apps/windows-app run build:win",
     "typecheck:app": "npm --prefix apps/windows-app run typecheck"
