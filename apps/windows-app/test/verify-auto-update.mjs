@@ -18,7 +18,7 @@ const pkgRaw = fs.readFileSync(path.join(appDir, "package.json"), "utf-8");
 const pkg = JSON.parse(pkgRaw);
 
 assert.strictEqual(pkg.name, "finlayer-windows-app", "Package name must be finlayer-windows-app");
-assert.strictEqual(pkg.version, "2.5.1", "Package version must be 2.5.1");
+assert.strictEqual(pkg.version, "2.5.2", "Package version must be 2.5.2");
 
 const buildConfig = pkg.build;
 assert.ok(buildConfig, "package.json must contain 'build' configuration");

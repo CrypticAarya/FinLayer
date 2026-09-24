@@ -1,7 +1,7 @@
 {
   "name": "finlayer-windows-app",
   "productName": "FinLayer",
-  "version": "2.5.1",
+  "version": "2.5.2",
   "description": "FinLayer Connector Desktop App for TallyPrime data synchronization",
   "main": "dist/main.js",
   "author": "FinLayer",
@@ -9,6 +9,8 @@
     "dev": "npm run build:ts && electron dist/main.js",
     "build:ts": "node build.mjs",
     "typecheck": "tsc --noEmit",
+    "test:token": "npm run build:ts && node test/connector-token-persistence.test.mjs",
+    "test": "node test/verify-auto-update.mjs && npm run test:token",
     "build:win": "npm run build:ts && electron-builder --win --x64",
     "build": "npm run build:win",
     "start": "npm run dev"

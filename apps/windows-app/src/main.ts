@@ -7,7 +7,9 @@ import crypto from "node:crypto";
 import { autoUpdater } from "electron-updater";
 
 // Ensure app name is explicitly FinLayer so userData path is consistently %APPDATA%/FinLayer
-app.setName("FinLayer");
+if (app && typeof app.setName === "function") {
+  app.setName("FinLayer");
+}
 
 // Reuse existing connector services and types
 import {
@@ -24,6 +26,8 @@ import {
   sendHeartbeatToApi,
   reportTallyConnected,
   reportTallyCompanies,
+  setConnectorToken,
+  getAuthHeaders,
   CONNECTOR_VERSION,
 } from "../../connector/src/api/client.js";
 import { startJobWorker, syncFinancialDataPipeline, type JobWorkerHandle } from "../../connector/src/jobs/job-worker.js";
@@ -103,7 +107,7 @@ function resolveInitialApiUrl(): string {
   ];
 
   try {
-    const userData = app.getPath("userData");
+    const userData = app && typeof app.getPath === "function" ? app.getPath("userData") : null;
     if (userData) searchDirs.unshift(userData);
   } catch {}
 
@@ -147,7 +151,7 @@ function resolveInitialApiUrl(): string {
       try {
         const content = JSON.parse(readFileSync(p, "utf-8"));
         if (content.apiUrl && typeof content.apiUrl === "string") {
-          if (app.isPackaged && (content.apiUrl.includes("localhost") || content.apiUrl.includes("127.0.0.1"))) {
+          if (app && app.isPackaged && (content.apiUrl.includes("localhost") || content.apiUrl.includes("127.0.0.1"))) {
             // Ignore stale development localhost URL in packaged production app
           } else {
             return normalizeUrl(content.apiUrl);
@@ -158,7 +162,7 @@ function resolveInitialApiUrl(): string {
   }
 
   // 4. Packaged production app or environment flag
-  if (app.isPackaged || process.env.FINLAYER_ENV === "production") {
+  if ((app && app.isPackaged) || process.env.FINLAYER_ENV === "production") {
     return PRODUCTION_API_URL;
   }
 
@@ -210,7 +214,7 @@ function resolveInitialTallyUrl(): string {
   ];
 
   try {
-    const userData = app.getPath("userData");
+    const userData = app && typeof app.getPath === "function" ? app.getPath("userData") : null;
     if (userData) searchDirs.unshift(userData);
   } catch {}
 
@@ -268,6 +272,9 @@ function getUserDataDir(): string {
 }
 
 function getStateFilePath(): string {
+  if (process.env.FINLAYER_STATE_PATH) {
+    return process.env.FINLAYER_STATE_PATH;
+  }
   return path.join(getUserDataDir(), "connector-state.json");
 }
 
@@ -276,26 +283,27 @@ function getUpdateStateFilePath(): string {
 }
 
 function getCandidateStateFilePaths(): string[] {
+  // 1. Custom env override if provided (highest priority, strict isolation)
+  if (process.env.FINLAYER_STATE_PATH) {
+    return [process.env.FINLAYER_STATE_PATH];
+  }
+
+  const paths: string[] = [];
+
+  // 2. Canonical userData path
+  paths.push(getStateFilePath());
+
   const base = process.env.APPDATA || (
     process.platform === "darwin"
       ? path.join(os.homedir(), "Library", "Application Support")
       : path.join(os.homedir(), ".config")
   );
-  const paths: string[] = [];
 
-  // 1. Canonical userData path
-  paths.push(getStateFilePath());
-
-  // 2. Explicit AppData FinLayer path
+  // 3. Explicit AppData FinLayer path
   paths.push(path.join(base, "FinLayer", "connector-state.json"));
 
-  // 3. Explicit AppData finlayer-windows-app path (legacy / dev fallback)
+  // 4. Explicit AppData finlayer-windows-app path (legacy / dev fallback)
   paths.push(path.join(base, "finlayer-windows-app", "connector-state.json"));
-
-  // 4. Custom env override if provided
-  if (process.env.FINLAYER_STATE_PATH) {
-    paths.push(process.env.FINLAYER_STATE_PATH);
-  }
 
   // 5. CWD fallback
   paths.push(path.join(process.cwd(), "connector-state.json"));
@@ -394,8 +402,43 @@ async function loadLocalState(): Promise<ConnectorState> {
   return initialState;
 }
 
-async function saveLocalState(state: ConnectorState): Promise<void> {
+async function saveLocalState(
+  state: ConnectorState,
+  options?: { allowTokenRemoval?: boolean }
+): Promise<void> {
+  // Guard against overwriting secure token credentials if not present in the passed state object
+  if (!options?.allowTokenRemoval && !state.encryptedConnectorToken && !state.connectorToken) {
+    if (process.env.TEST_FLOW === "1" && testFlowState) {
+      if (testFlowState.encryptedConnectorToken) {
+        state.encryptedConnectorToken = testFlowState.encryptedConnectorToken;
+      }
+      if (testFlowState.connectorToken) {
+        state.connectorToken = testFlowState.connectorToken;
+      }
+    } else {
+      const filePath = getStateFilePath();
+      try {
+        if (existsSync(filePath)) {
+          const raw = await fs.readFile(filePath, "utf-8");
+          const existing = JSON.parse(raw) as ConnectorState;
+          if (existing.encryptedConnectorToken && !state.encryptedConnectorToken) {
+            state.encryptedConnectorToken = existing.encryptedConnectorToken;
+          }
+          if (existing.connectorToken && !state.connectorToken) {
+            state.connectorToken = existing.connectorToken;
+          }
+        }
+      } catch {
+        // Disk file does not exist or unreadable, ignore
+      }
+    }
+  }
+
   if (process.env.TEST_FLOW === "1") {
+    if (options?.allowTokenRemoval && testFlowState) {
+      delete testFlowState.encryptedConnectorToken;
+      delete testFlowState.connectorToken;
+    }
     testFlowState = state;
   }
   if (!state.apiUrl && typeof API_URL === "string" && API_URL) {
@@ -416,15 +459,20 @@ async function saveLocalState(state: ConnectorState): Promise<void> {
 
 // ─── Native OS Secure Token Storage (Windows DPAPI / Electron safeStorage) ─────
 
+function getSafeStorage(): typeof safeStorage | undefined {
+  return (globalThis as any).__mockSafeStorage || safeStorage;
+}
+
 export class ElectronSafeStorageProvider implements ITokenStorage {
   async getToken(): Promise<string | null> {
     const state = await loadLocalState();
     if (!state) return null;
 
-    if (state.encryptedConnectorToken && safeStorage && safeStorage.isEncryptionAvailable()) {
+    const ss = getSafeStorage();
+    if (state.encryptedConnectorToken && ss && ss.isEncryptionAvailable()) {
       try {
         const buffer = Buffer.from(state.encryptedConnectorToken, "base64");
-        return safeStorage.decryptString(buffer);
+        return ss.decryptString(buffer);
       } catch (err) {
         console.error("[SafeStorage] Failed to decrypt token via safeStorage:", err);
       }
@@ -433,12 +481,12 @@ export class ElectronSafeStorageProvider implements ITokenStorage {
     // Auto-migration: if legacy plaintext token exists, encrypt and wipe plaintext
     if (state.connectorToken) {
       const plaintext = state.connectorToken;
-      if (safeStorage && safeStorage.isEncryptionAvailable()) {
+      if (ss && ss.isEncryptionAvailable()) {
         try {
-          const encrypted = safeStorage.encryptString(plaintext).toString("base64");
+          const encrypted = ss.encryptString(plaintext).toString("base64");
           state.encryptedConnectorToken = encrypted;
           delete state.connectorToken;
-          await saveLocalState(state);
+          await saveLocalState(state, { allowTokenRemoval: true });
           console.log("[SafeStorage] Migrated legacy plaintext token to OS native encrypted storage");
         } catch (err) {
           console.error("[SafeStorage] Failed to encrypt legacy token with safeStorage:", err);
@@ -452,8 +500,9 @@ export class ElectronSafeStorageProvider implements ITokenStorage {
 
   async setToken(token: string): Promise<void> {
     const state = await loadLocalState();
-    if (safeStorage && safeStorage.isEncryptionAvailable()) {
-      const encrypted = safeStorage.encryptString(token).toString("base64");
+    const ss = getSafeStorage();
+    if (ss && ss.isEncryptionAvailable()) {
+      const encrypted = ss.encryptString(token).toString("base64");
       state.encryptedConnectorToken = encrypted;
       delete state.connectorToken; // WIPE plaintext
       console.log("[SafeStorage] Token securely stored via Electron safeStorage (Windows DPAPI)");
@@ -461,18 +510,19 @@ export class ElectronSafeStorageProvider implements ITokenStorage {
       state.connectorToken = token;
       console.warn("[SafeStorage] Native encryption unavailable; stored token in fallback state");
     }
-    await saveLocalState(state);
+    await saveLocalState(state, { allowTokenRemoval: true });
   }
 
   async clearToken(): Promise<void> {
     const state = await loadLocalState();
     delete state.connectorToken;
     delete state.encryptedConnectorToken;
-    await saveLocalState(state);
+    await saveLocalState(state, { allowTokenRemoval: true });
   }
 }
 
 const tokenStorage: ITokenStorage = new ElectronSafeStorageProvider();
+TokenStorageManager.setProvider(tokenStorage);
 
 interface UpdateState {
   lastCheck: string;
@@ -833,6 +883,7 @@ function createWindow(): void {
 
 // ─── IPC Handlers ─────────────────────────────────────────────────────────────
 
+if (ipcMain && typeof ipcMain.handle === "function") {
 // 1. Get Initial App State
 ipcMain.handle("finlayer:get-initial-state", async () => {
   const state = await loadLocalState();
@@ -1002,6 +1053,15 @@ ipcMain.handle("finlayer:fetch-active-company", async () => {
         });
         state.connectorId = reg.connectorId;
         state.setupStatus = (reg.setupStatus as any) || "REGISTERED";
+        if (reg.token) {
+          const fresh = await loadLocalState();
+          if (fresh.encryptedConnectorToken) {
+            state.encryptedConnectorToken = fresh.encryptedConnectorToken;
+          }
+          if (fresh.connectorToken) {
+            state.connectorToken = fresh.connectorToken;
+          }
+        }
         await saveLocalState(state);
         console.log(`[COMPANY STATE] Connector registered: ${state.connectorId}`);
       } catch (e) {
@@ -1041,6 +1101,15 @@ ipcMain.handle("finlayer:fetch-active-company", async () => {
             });
             state.connectorId = reg.connectorId;
             state.setupStatus = (reg.setupStatus as any) || "REGISTERED";
+            if (reg.token) {
+              const fresh = await loadLocalState();
+              if (fresh.encryptedConnectorToken) {
+                state.encryptedConnectorToken = fresh.encryptedConnectorToken;
+              }
+              if (fresh.connectorToken) {
+                state.connectorToken = fresh.connectorToken;
+              }
+            }
             await saveLocalState(state);
             console.log(`[COMPANY STATE] Re-registered connectorId="${state.connectorId}". Retrying selectCompany...`);
 
@@ -1128,6 +1197,15 @@ ipcMain.handle("finlayer:select-company", async (_event, companyName: string) =>
       });
       state.connectorId = reg.connectorId;
       state.setupStatus = (reg.setupStatus as any) || "REGISTERED";
+      if (reg.token) {
+        const fresh = await loadLocalState();
+        if (fresh.encryptedConnectorToken) {
+          state.encryptedConnectorToken = fresh.encryptedConnectorToken;
+        }
+        if (fresh.connectorToken) {
+          state.connectorToken = fresh.connectorToken;
+        }
+      }
       await saveLocalState(state);
     }
 
@@ -1149,6 +1227,15 @@ ipcMain.handle("finlayer:select-company", async (_event, companyName: string) =>
         });
         state.connectorId = reg.connectorId;
         state.setupStatus = (reg.setupStatus as any) || "REGISTERED";
+        if (reg.token) {
+          const fresh = await loadLocalState();
+          if (fresh.encryptedConnectorToken) {
+            state.encryptedConnectorToken = fresh.encryptedConnectorToken;
+          }
+          if (fresh.connectorToken) {
+            state.connectorToken = fresh.connectorToken;
+          }
+        }
         await saveLocalState(state);
         selection = await selectCompanyForConnector(state.connectorId, companyName);
         console.log(`[COMPANY STATE] API selectCompany response (after re-registration):`, selection);
@@ -1317,54 +1404,77 @@ ipcMain.handle("finlayer:restart-and-install", () => {
   autoUpdater.quitAndInstall(false, true);
   return { success: true };
 });
+}
 
 // ─── App Lifecycle ────────────────────────────────────────────────────────────
 
-app.whenReady().then(async () => {
-  // Inject OS native secure storage for connector credentials (Windows DPAPI)
-  TokenStorageManager.setProvider(new ElectronSafeStorageProvider());
+if (app && typeof app.whenReady === "function") {
+  app.whenReady().then(async () => {
+    // Inject OS native secure storage for connector credentials (Windows DPAPI)
+    TokenStorageManager.setProvider(new ElectronSafeStorageProvider());
 
-  const state = await loadLocalState();
+    const state = await loadLocalState();
 
-  // If connector is registered but companyId or ACTIVE status is missing, attempt sync via heartbeat
-  if (state.connectorId && (!state.companyId || state.setupStatus !== "ACTIVE")) {
-    try {
-      const hb = await sendHeartbeatToApi(state.connectorId, { version: CONNECTOR_VERSION });
-      let changed = false;
-      if (hb && (hb as any).companyId && !state.companyId) {
-        state.companyId = (hb as any).companyId;
-        changed = true;
-      }
-      if (hb && (hb as any).tallyCompanyName && !state.tallyCompanyName) {
-        state.tallyCompanyName = (hb as any).tallyCompanyName;
-        changed = true;
-      }
-      if (hb && (hb as any).setupStatus === "ACTIVE" && state.setupStatus !== "ACTIVE") {
-        state.setupStatus = "ACTIVE";
-        changed = true;
-      }
-      if (changed) {
-        await saveLocalState(state);
-      }
-    } catch {}
-  }
-
-  if (state.setupStatus === "ACTIVE") {
-    isSetupActive = true;
-    if (state.connectorId) {
-      configureConnector(state);
-      startBackgroundServices(state.connectorId);
+    // If connector is registered but companyId or ACTIVE status is missing, attempt sync via heartbeat
+    if (state.connectorId && (!state.companyId || state.setupStatus !== "ACTIVE")) {
+      try {
+        const hb = await sendHeartbeatToApi(state.connectorId, { version: CONNECTOR_VERSION });
+        let changed = false;
+        if (hb && (hb as any).companyId && !state.companyId) {
+          state.companyId = (hb as any).companyId;
+          changed = true;
+        }
+        if (hb && (hb as any).tallyCompanyName && !state.tallyCompanyName) {
+          state.tallyCompanyName = (hb as any).tallyCompanyName;
+          changed = true;
+        }
+        if (hb && (hb as any).setupStatus === "ACTIVE" && state.setupStatus !== "ACTIVE") {
+          state.setupStatus = "ACTIVE";
+          changed = true;
+        }
+        if (changed) {
+          await saveLocalState(state);
+        }
+      } catch {}
     }
-  }
 
-  setupAutoUpdater();
-  createWindow();
+    if (state.setupStatus === "ACTIVE") {
+      isSetupActive = true;
+      if (state.connectorId) {
+        configureConnector(state);
+        startBackgroundServices(state.connectorId);
+      }
+    }
 
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    setupAutoUpdater();
+    createWindow();
+
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
   });
-});
+}
 
-app.on("window-all-closed", () => {
-  app.quit();
-});
+if (app && typeof app.on === "function") {
+  app.on("window-all-closed", () => {
+    app.quit();
+  });
+}
+
+export function resetTestFlowState(): void {
+  testFlowState = null;
+}
+
+export {
+  saveLocalState,
+  loadLocalState,
+  getStateFilePath,
+  getCandidateStateFilePaths,
+  tokenStorage,
+  ensureConnectorToken,
+  configureConnector,
+  registerConnectorWithApi,
+  setConnectorToken,
+  getAuthHeaders,
+  connectorConfig,
+};
