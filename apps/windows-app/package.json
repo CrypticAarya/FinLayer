@@ -1,7 +1,7 @@
 {
   "name": "finlayer-windows-app",
   "productName": "FinLayer",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "FinLayer Connector Desktop App for TallyPrime data synchronization",
   "main": "dist/main.js",
   "author": "FinLayer",
