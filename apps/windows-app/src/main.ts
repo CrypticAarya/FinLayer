@@ -33,10 +33,10 @@ import { type ITokenStorage, TokenStorageManager } from "../../connector/src/sta
 
 // ─── Internal API Configuration Resolution ─────────────────────────────────────
 // Staging default: http://192.168.88.25:4000
-// Production later: https://api.finlayer.com
+// Production: https://finlayer-api.onrender.com
 // Development: overridable internally via env / config / cli flags
 
-const PRODUCTION_API_URL = "https://api.finlayer.com";
+const PRODUCTION_API_URL = "https://finlayer-api.onrender.com";
 const STAGING_API_URL = "http://192.168.88.25:4000";
 const DEFAULT_UPDATE_URL = "https://github.com/CrypticAarya/FinLayer/releases";
 
